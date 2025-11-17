@@ -209,51 +209,157 @@ def delete_schedule(schedule_id):
     db.session.commit()
     return jsonify({'success': True})
 
+@api_bp.route('/schedules/<int:schedule_id>/extended', methods=['GET'])
+def get_extended_schedule(schedule_id):
+    """Получить расширенное расписание с занятиями по неделям"""
+    try:
+        from app.models import LessonExtended
+        
+        schedule = Schedule.query.get_or_404(schedule_id)
+        
+        # Получаем все занятия
+        lessons = LessonExtended.query.filter_by(schedule_id=schedule_id).all()
+        
+        if not lessons:
+            # Нет занятий
+            return jsonify({
+                'id': schedule.id,
+                'name': schedule.name,
+                'semester': schedule.semester,
+                'academic_year': schedule.academic_year,
+                'fitness_score': schedule.fitness_score,
+                'conflicts_count': schedule.conflicts_count,
+                'weeks': []
+            })
+        
+        # Группируем по неделям
+        weeks_data = {}
+        skipped_lessons = 0
+        
+        for lesson in lessons:
+            # ДОБАВЛЕНА ПРОВЕРКА: Пропускаем занятия без недели
+            if not lesson.week:
+                skipped_lessons += 1
+                print(f"⚠️ Занятие ID={lesson.id} не имеет недели (week_id={lesson.week_id})")
+                continue
+            
+            week_num = lesson.week.week_number
+            
+            if week_num not in weeks_data:
+                weeks_data[week_num] = {
+                    'week_number': week_num,
+                    'start_date': lesson.week.start_date.isoformat(),
+                    'end_date': lesson.week.end_date.isoformat(),
+                    'lessons': []
+                }
+            
+            weeks_data[week_num]['lessons'].append(lesson.to_dict())
+        
+        if skipped_lessons > 0:
+            print(f"⚠️ Пропущено {skipped_lessons} занятий без недели")
+        
+        return jsonify({
+            'id': schedule.id,
+            'name': schedule.name,
+            'semester': schedule.semester,
+            'academic_year': schedule.academic_year,
+            'fitness_score': schedule.fitness_score,
+            'conflicts_count': schedule.conflicts_count,
+            'generation_method': schedule.generation_method,
+            'generation_time': schedule.generation_time,
+            'weeks': sorted(weeks_data.values(), key=lambda x: x['week_number']),
+            'skipped_lessons': skipped_lessons  # Для отладки
+        })
+        
+    except ImportError:
+        # Модель LessonExtended не существует, используем старую
+        print("⚠️ LessonExtended не найден, используем Lesson")
+        
+        schedule = Schedule.query.get_or_404(schedule_id)
+        lessons = Lesson.query.filter_by(schedule_id=schedule_id).all()
+        
+        return jsonify({
+            'id': schedule.id,
+            'name': schedule.name,
+            'fitness_score': schedule.fitness_score,
+            'conflicts_count': schedule.conflicts_count,
+            'weeks': [{
+                'week_number': 1,
+                'start_date': '2024-09-01',
+                'end_date': '2025-01-31',
+                'lessons': [l.to_dict() for l in lessons]
+            }]
+        })
+        
+    except Exception as e:
+        print(f"Ошибка в get_extended_schedule: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    
+# ДОБАВЬТЕ ЭТОТ ЭНДПОИНТ:
+@api_bp.route('/schedules/<int:schedule_id>/week/<int:week_number>', methods=['GET'])
+def get_schedule_week(schedule_id, week_number):
+    """Получить расписание на конкретную неделю"""
+    try:
+        from app.models import LessonExtended, Week, Semester, AcademicYear
+        
+        schedule = Schedule.query.get_or_404(schedule_id)
+        
+        # Находим неделю
+        # Предполагаем, что используется текущий учебный год
+        current_year = AcademicYear.query.filter_by(is_current=True).first()
+        
+        if not current_year:
+            # Если нет текущего года, берём любой
+            current_year = AcademicYear.query.first()
+        
+        if not current_year:
+            return jsonify({'error': 'Не найден учебный год'}), 404
+        
+        # Ищем неделю по номеру
+        week = Week.query.join(Semester).filter(
+            Semester.academic_year_id == current_year.id,
+            Week.week_number == week_number
+        ).first()
+        
+        if not week:
+            return jsonify({'error': f'Неделя {week_number} не найдена'}), 404
+        
+        # Получаем занятия этой недели
+        lessons = LessonExtended.query.filter_by(
+            schedule_id=schedule_id,
+            week_id=week.id
+        ).all()
+        
+        # Группируем по дням и времени
+        timetable = {}
+        for day in range(5):  # Пн-Пт
+            timetable[day] = {}
+            for slot in range(7):  # 7 пар
+                timetable[day][slot] = []
+        
+        for lesson in lessons:
+            day = lesson.day_of_week
+            slot = lesson.time_slot
+            
+            if day in timetable and slot in timetable[day]:
+                timetable[day][slot].append(lesson.to_dict())
+        
+        return jsonify({
+            'week_number': week_number,
+            'start_date': week.start_date.isoformat(),
+            'end_date': week.end_date.isoformat(),
+            'timetable': timetable
+        })
+        
+    except Exception as e:
+        print(f"Ошибка в get_schedule_week: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 # # ==================== GROUPS ====================
-# # @api_bp.route('/groups', methods=['GET'])
-# # def get_groups():
-# #     groups = Group.query.all()
-# #     return jsonify([g.to_dict() for g in groups])
-
-# @api_bp.route('/groups/<int:group_id>', methods=['GET'])
-# def get_group(group_id):
-#     """Получить одну группу по ID"""
-#     group = Group.query.get_or_404(group_id)
-#     return jsonify(group.to_dict(include_details=True))
-
-# @api_bp.route('/groups', methods=['POST'])
-# def create_group():
-#     data = request.json
-#     group = Group(
-#         name=data['name'],
-#         course=data.get('course'),
-#         student_count=data['student_count'],
-#         specialization=data.get('specialization'),
-#         faculty=data.get('faculty'),
-#         start_year=data.get('start_year'),
-#         max_lessons_per_day=data.get('max_lessons_per_day', 7),
-#         prefer_morning=data.get('prefer_morning', True)
-#     )
-#     db.session.add(group)
-#     db.session.commit()
-    
-#     # Добавляем предметы для группы
-#     if 'subjects' in data:
-#         for subj_data in data['subjects']:
-#             gs = GroupSubject(
-#                 group_id=group.id,
-#                 subject_id=subj_data['subject_id'],
-#                 hours_per_week=subj_data['hours_per_week'],
-#                 lesson_type=subj_data.get('lesson_type', 'mixed'),
-#                 semester=subj_data.get('semester'),
-#                 requires_split=subj_data.get('requires_split', False),
-#                 subgroup_count=subj_data.get('subgroup_count', 1)
-#             )
-#             db.session.add(gs)
-#         db.session.commit()
-    
-#     return jsonify(group.to_dict()), 201
 
 @api_bp.route('/groups/<int:group_id>', methods=['PUT'])
 def update_group(group_id):
@@ -670,12 +776,12 @@ def delete_lesson_type_constraint(constraint_id):
 
 @api_bp.route('/schedules/generate-semester', methods=['POST'])
 def generate_semester_schedule():
-    """Генерация расписания на семестр"""
+    """Генерация расписания на семестр с использованием CSP"""
     try:
         data = request.json
         
         print("=" * 70)
-        print("НАЧАЛО ГЕНЕРАЦИИ СЕМЕСТРОВОГО РАСПИСАНИЯ")
+        print("НАЧАЛО ГЕНЕРАЦИИ СЕМЕСТРОВОГО РАСПИСАНИЯ (CSP)")
         print("=" * 70)
         
         semester_id = data.get('semester_id')
@@ -687,24 +793,26 @@ def generate_semester_schedule():
             name=data.get('name', f'Расписание на семестр'),
             semester=data.get('semester_label', 'Семестр'),
             academic_year=data.get('academic_year', '2024/2025'),
-            generation_method='genetic_extended'
+            generation_method='csp_backtracking'
         )
         db.session.add(schedule)
         db.session.commit()
         print(f"✅ Создана запись расписания: ID={schedule.id}")
         
-        # Запуск генетического алгоритма
-        from app.schedulers.genetic_extended import GeneticSchedulerExtended
+        # ИЗМЕНЕНИЕ: Используем CSP планировщик вместо генетического
+        from app.schedulers.csp_scheduler import CSPScheduler
         
-        population_size = data.get('population_size', 100)
-        generations = data.get('generations', 500)
-        mutation_rate = data.get('mutation_rate', 0.1)
-        
-        scheduler = GeneticSchedulerExtended(
+        # Параметры (для CSP они не так важны, но можно передать max_iterations)
+        max_iterations = data.get('max_iterations', 100000)
+        max_iterations = data.get('max_iterations', 100000)
+        min_lessons_per_day = data.get('min_lessons_per_day', 2)  # Минимум пар в день
+        max_lessons_per_day = data.get('max_lessons_per_day', 4)
+
+        scheduler = CSPScheduler(
             semester_id=semester_id,
-            population_size=population_size,
-            generations=generations,
-            mutation_rate=mutation_rate
+            max_iterations=max_iterations,
+            min_lessons_per_day=min_lessons_per_day,
+            max_lessons_per_day=max_lessons_per_day
         )
         
         result = scheduler.generate()
@@ -732,6 +840,7 @@ def generate_semester_schedule():
         
         schedule.fitness_score = result['fitness']
         schedule.conflicts_count = len(result['conflicts'])
+        schedule.generation_time = result.get('time', 0)
         
         db.session.commit()
         print(f"✅ Сохранено {len(result['lessons'])} занятий")
@@ -746,7 +855,10 @@ def generate_semester_schedule():
             'lessons_count': len(result['lessons']),
             'fitness': result['fitness'],
             'conflicts_count': len(result['conflicts']),
-            'conflicts': result['conflicts'][:10]  # Первые 10 конфликтов
+            'conflicts': result['conflicts'],
+            'method': result.get('method', 'csp'),
+            'iterations': result.get('iterations', 0),
+            'time': result.get('time', 0)
         })
         
     except Exception as e:
@@ -761,85 +873,9 @@ def generate_semester_schedule():
         
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
+    
 
-@api_bp.route('/schedules/<int:schedule_id>/extended', methods=['GET'])
-def get_extended_schedule(schedule_id):
-    """Получить расширенное расписание с занятиями по неделям"""
-    from app.models import LessonExtended
-    
-    schedule = Schedule.query.get_or_404(schedule_id)
-    
-    # Получаем все занятия
-    lessons = LessonExtended.query.filter_by(schedule_id=schedule_id).all()
-    
-    # Группируем по неделям
-    weeks_data = {}
-    for lesson in lessons:
-        week_num = lesson.week.week_number
-        if week_num not in weeks_data:
-            weeks_data[week_num] = {
-                'week_number': week_num,
-                'start_date': lesson.week.start_date.isoformat(),
-                'end_date': lesson.week.end_date.isoformat(),
-                'lessons': []
-            }
-        
-        weeks_data[week_num]['lessons'].append(lesson.to_dict())
-    
-    return jsonify({
-        'id': schedule.id,
-        'name': schedule.name,
-        'fitness_score': schedule.fitness_score,
-        'conflicts_count': schedule.conflicts_count,
-        'weeks': sorted(weeks_data.values(), key=lambda x: x['week_number'])
-    })
 
-@api_bp.route('/schedules/<int:schedule_id>/week/<int:week_number>', methods=['GET'])
-def get_schedule_week(schedule_id, week_number):
-    """Получить расписание на конкретную неделю"""
-    from app.models import LessonExtended, Week, Semester
-    
-    schedule = Schedule.query.get_or_404(schedule_id)
-    
-    # Находим неделю (предполагаем, что используется текущий семестр)
-    from app.models import AcademicYear
-    current_year = AcademicYear.query.filter_by(is_current=True).first()
-    
-    if not current_year:
-        return jsonify({'error': 'Не установлен текущий учебный год'}), 400
-    
-    week = Week.query.join(Semester).filter(
-        Semester.academic_year_id == current_year.id,
-        Week.week_number == week_number
-    ).first()
-    
-    if not week:
-        return jsonify({'error': f'Неделя {week_number} не найдена'}), 404
-    
-    # Получаем занятия этой недели
-    lessons = LessonExtended.query.filter_by(
-        schedule_id=schedule_id,
-        week_id=week.id
-    ).all()
-    
-    # Группируем по дням и времени
-    timetable = {}
-    for day in range(5):  # Пн-Пт
-        timetable[day] = {}
-        for slot in range(7):  # 7 пар
-            timetable[day][slot] = []
-    
-    for lesson in lessons:
-        day = lesson.day_of_week
-        slot = lesson.time_slot
-        timetable[day][slot].append(lesson.to_dict())
-    
-    return jsonify({
-        'week_number': week_number,
-        'start_date': week.start_date.isoformat(),
-        'end_date': week.end_date.isoformat(),
-        'timetable': timetable
-    })
 
 # ==================== GROUP SUBJECT EXTENDED ====================
 

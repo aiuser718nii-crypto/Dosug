@@ -362,28 +362,38 @@ class GeneticSchedulerExtended:
     def _create_random_chromosome(self) -> Chromosome:
         """Создание случайной хромосомы (расписания)"""
         genes = []
-        
+
         for group in self.groups:
             for gs in group.group_subjects.all():
                 if not gs.subject:
                     continue
                 
-                # Определяем типы занятий и их количество
+                # Определяем типы занятий и их количество В НЕДЕЛЮ
                 lesson_types_hours = {
                     'lecture': gs.lecture_hours or 0,
                     'seminar': gs.seminar_hours or 0,
                     'lab': gs.lab_hours or 0,
                     'practice': gs.practice_hours or 0,
                 }
-                
+
                 # Если не указаны конкретные типы, используем общее количество часов
                 total_specific = sum(lesson_types_hours.values())
                 if total_specific == 0 and gs.hours_per_week > 0:
                     lesson_types_hours['lecture'] = gs.hours_per_week
+
+                # Находим подходящих преподавателей заранее
+                suitable_teachers = [
+                    t for t in self.teachers
+                    if gs.subject in t.subjects.all()
+                ]
+
+                if not suitable_teachers:
+                    print(f"   ⚠️ Группа '{group.name}', предмет '{gs.subject.name}': нет преподавателей, пропуск")
+                    continue
                 
                 # Создаём гены для каждого типа занятий
-                for lesson_type_name, hours in lesson_types_hours.items():
-                    if hours == 0:
+                for lesson_type_name, hours_per_week in lesson_types_hours.items():
+                    if hours_per_week == 0:
                         continue
                     
                     # Находим тип занятия
@@ -392,55 +402,53 @@ class GeneticSchedulerExtended:
                          if lt.code.value == lesson_type_name),
                         None
                     )
-                    
+
                     if not lesson_type:
+                        print(f"   ⚠️ Тип занятия '{lesson_type_name}' не найден")
                         continue
                     
-                    # Находим подходящих преподавателей
-                    suitable_teachers = [
-                        t for t in self.teachers
-                        if gs.subject in t.subjects.all()
-                    ]
-                    
-                    if not suitable_teachers:
-                        continue
-                    
-                    # Создаём занятия
-                    lessons_count = hours  # Упрощение: 1 час = 1 занятие
-                    weeks_to_use = random.sample(self.weeks, min(lessons_count, len(self.weeks)))
-                    
-                    for week in weeks_to_use:
-                        teacher = random.choice(suitable_teachers)
-                        
-                        # Выбор аудитории
-                        if group.default_room and not lesson_type.requires_special_room:
-                            room = group.default_room
-                        else:
-                            suitable_rooms = [
-                                r for r in self.rooms
-                                if r.capacity >= group.student_count
-                            ]
-                            room = random.choice(suitable_rooms) if suitable_rooms else self.rooms[0]
-                        
-                        # Случайное время
-                        day = random.randint(0, 4)  # Пн-Пт
-                        time_slot = random.randint(0, 6)
-                        
-                        gene = ScheduleGene(
-                            group_id=group.id,
-                            subject_id=gs.subject_id,
-                            lesson_type_id=lesson_type.id,
-                            teacher_id=teacher.id,
-                            room_id=room.id,
-                            week_id=week.id,
-                            day=day,
-                            time_slot=time_slot
-                        )
-                        
-                        genes.append(gene)
-        
+
+                    for week in self.weeks:
+                        # Создаём нужное количество занятий В НЕДЕЛЮ
+                        for _ in range(hours_per_week):
+                            teacher = random.choice(suitable_teachers)
+
+                            # Выбор аудитории
+                            if hasattr(group, 'default_room') and group.default_room and not lesson_type.requires_special_room:
+                                room = group.default_room
+                            else:
+                                suitable_rooms = [
+                                    r for r in self.rooms
+                                    if r.capacity >= group.student_count
+                                ]
+                                if suitable_rooms:
+                                    room = random.choice(suitable_rooms)
+                                else:
+                                    # Берём любую аудиторию, если подходящих нет
+                                    room = random.choice(self.rooms) if self.rooms else None
+
+                            if not room:
+                                continue
+                            
+                            # Случайное время
+                            day = random.randint(0, 4)  # Пн-Пт
+                            time_slot = random.randint(0, 6)  # 0-6 пар
+
+                            gene = ScheduleGene(
+                                group_id=group.id,
+                                subject_id=gs.subject_id,
+                                lesson_type_id=lesson_type.id,
+                                teacher_id=teacher.id,
+                                room_id=room.id,
+                                week_id=week.id,
+                                day=day,
+                                time_slot=time_slot
+                            )
+
+                            genes.append(gene)
+
         return Chromosome(genes)
-    
+
     def _selection(self, population: List[Chromosome]) -> List[Chromosome]:
         """Отбор лучших особей (турнирный отбор)"""
         tournament_size = 5

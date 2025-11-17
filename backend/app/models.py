@@ -898,6 +898,7 @@ class LessonExtended(db.Model):
     is_online = db.Column(db.Boolean, default=False)
     location = db.Column(db.String(200))  # Для выездов
     notes = db.Column(db.Text)
+    week = db.relationship('Week', back_populates='lessons')
     
     # Связи
     schedule = db.relationship('Schedule')
@@ -975,7 +976,7 @@ class Schedule(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     activated_at = db.Column(db.DateTime)  # Когда стало активным
-    
+    generation_time = db.Column(db.Float)
     # Автор
     created_by = db.Column(db.String(100))
     
