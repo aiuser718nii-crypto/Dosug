@@ -4,7 +4,7 @@ CSP (Constraint Satisfaction Problem) планировщик расписани�
 Использует backtracking с эвристиками для составления расписания на семестр.
 Гарантирует отсутствие конфликтов или сообщает, что решение невозможно.
 
-Версия с корректным backtracking, равномерным распределением и чередованием занятий.
+Версия с корректным backtracking, глобальным распределением и чередованием занятий.
 
 Автор: AI Assistant
 Дата: 2024
@@ -14,6 +14,7 @@ from typing import List, Dict, Set, Tuple, Optional, Generator
 from collections import defaultdict
 from datetime import datetime
 import random
+import traceback
 
 # Предполагается, что эти модели импортированы из вашего Flask-приложения
 from app.models import Teacher, Room, Group, Subject, Semester, Week, LessonType
@@ -51,20 +52,16 @@ class LessonTask:
 
 class CSPScheduler:
     """
-    CSP планировщик с корректным backtracking, равномерным распределением и чередованием.
+    CSP планировщик с корректным backtracking, глобальным распределением и чередованием.
     """
-    # ИСПРАВЛЕНИЕ: Добавляем 'min_days_between_lessons' в конструктор
     def __init__(self, semester_id: int, max_iterations: int = 1000000, max_lessons_per_day: int = 5, min_days_between_lessons: int = 2):
         self.semester_id = semester_id
         self.max_iterations = max_iterations
         self.iterations = 0
         
-        # Настройки ограничений
         self.max_lessons_per_day = max_lessons_per_day
-        # ИСПРАВЛЕНИЕ: Сохраняем параметр как атрибут экземпляра
         self.min_days_between_lessons = min_days_between_lessons
         
-        # Данные из БД
         self.semester: Optional[Semester] = None
         self.weeks: List[Week] = []
         self.week_ids: List[int] = []
@@ -74,9 +71,8 @@ class CSPScheduler:
         self.rooms: List[Room] = []
         self.lesson_types: Dict[int, LessonType] = {}
         
-        # Плоский список индивидуальных заданий
         self.assignments_to_schedule: List[LessonTask] = []
-        self.solution = [] # Здесь будут храниться итоговые назначения
+        self.solution = []
         
         # Состояние планировщика
         self.teacher_busy: Dict[int, Set[TimeSlot]] = defaultdict(set)
@@ -84,6 +80,10 @@ class CSPScheduler:
         self.group_busy: Dict[int, Set[TimeSlot]] = defaultdict(set)
         self.group_daily_count: Dict[Tuple[int, int, int], int] = defaultdict(int)
         self.task_weekly_count: Dict[Tuple[int, int, int], int] = defaultdict(int)
+        
+        # ИСПРАВЛЕНИЕ: Новая, более простая структура для отслеживания последнего занятия
+        # Хранит абсолютный индекс дня (0-109) для пары (группа, предмет)
+        self.group_subject_last_day_index: Dict[Tuple[int, int], int] = {}
 
         # Кэши
         self.subject_teachers: Dict[int, List[int]] = defaultdict(list)
@@ -124,7 +124,9 @@ class CSPScheduler:
 
         self.lesson_types = {lt.id: lt for lt in LessonType.query.all()}
         for teacher in self.teachers:
-            for subject in teacher.subjects:
+            # Используем .subjects вместо .subjects.all() если это уже список
+            subjects = teacher.subjects if isinstance(teacher.subjects, list) else teacher.subjects.all()
+            for subject in subjects:
                 self.subject_teachers[subject.id].append(teacher.id)
                 self.subject_dict[subject.id] = subject
         
@@ -135,29 +137,50 @@ class CSPScheduler:
         print("\n📋 Создание атомарных задач для планирования...")
         
         all_tasks_definitions = []
+        # Важно: используем гибкую модель с LessonTypeLoad, если она есть
+        use_flexible_load = hasattr(GroupSubject, 'lesson_type_loads')
+
         for group in self.groups:
-            for gs in group.group_subjects:
+            # Используем .group_subjects вместо .group_subjects.all() если это уже список
+            group_subjects = group.group_subjects if isinstance(group.group_subjects, list) else group.group_subjects.all()
+            for gs in group_subjects:
                 if not gs.subject: continue
                 
-                lesson_configs = [
-                    ('lecture', gs.lecture_hours or 0), ('seminar', gs.seminar_hours or 0),
-                    ('lab', gs.lab_hours or 0), ('practice', gs.practice_hours or 0),
-                ]
-                total_specific = sum(h for _, h in lesson_configs)
-                if total_specific == 0 and gs.hours_per_week > 0:
-                    lesson_configs = [('lecture', gs.hours_per_week)]
-                
-                for type_name, hours in lesson_configs:
-                    if hours == 0: continue
-                    l_type = next((lt for lt in self.lesson_types.values() if lt.code.value == type_name), None)
-                    if not l_type or not self.subject_teachers[gs.subject_id]: continue
+                lesson_configs = []
+                if use_flexible_load:
+                    for load in gs.lesson_type_loads:
+                        if load.hours_per_week > 0:
+                            lesson_configs.append((load.lesson_type, load.hours_per_week))
+                else: # Fallback на старую модель, если новой нет
+                    configs_from_old_model = [
+                        ('lecture', gs.lecture_hours or 0), ('seminar', gs.seminar_hours or 0),
+                        ('lab', gs.lab_hours or 0), ('practice', gs.practice_hours or 0),
+                    ]
+                    total_specific = sum(h for _, h in configs_from_old_model)
+                    if total_specific == 0 and gs.hours_per_week > 0:
+                        lecture_type = next((lt for lt in self.lesson_types.values() if lt.code.value == 'lecture'), None)
+                        if lecture_type: lesson_configs.append((lecture_type, gs.hours_per_week))
+                    else:
+                        for type_name, hours in configs_from_old_model:
+                             if hours > 0:
+                                l_type = next((lt for lt in self.lesson_types.values() if lt.code.value == type_name), None)
+                                if l_type: lesson_configs.append((l_type, hours))
+
+                for lesson_type_obj, hours in lesson_configs:
+                    if not lesson_type_obj or not self.subject_teachers[gs.subject_id]: continue
                     
                     total_hours = hours * len(self.weeks)
-                    task_def = LessonTask(group.id, gs.subject_id, l_type.id, hours)
+                    task_def = LessonTask(group.id, gs.subject_id, lesson_type_obj.id, hours)
                     all_tasks_definitions.extend([task_def] * total_hours)
-                    print(f"   • Добавлено {total_hours} занятий: {group.name} / {gs.subject.name} / {type_name}")
+                    print(f"   • Добавлено {total_hours} занятий: {group.name} / {gs.subject.name} / {lesson_type_obj.name}")
         
+        # Сортируем по сложности (меньше преподавателей = сложнее)
         all_tasks_definitions.sort(key=lambda t: (len(self._get_suitable_teachers(t)), -t.hours_per_week))
+        
+        # ИСПРАВЛЕНИЕ: Перемешиваем задачи, чтобы избежать "слипания" однотипных занятий.
+        # Это заставит алгоритм чередовать предметы и типы занятий.
+        random.shuffle(all_tasks_definitions)
+        
         self.assignments_to_schedule = all_tasks_definitions
         print(f"\n   📊 Всего занятий для планирования: {len(self.assignments_to_schedule)}")
     
@@ -168,7 +191,8 @@ class CSPScheduler:
         group = self.group_dict[task.group_id]
         lesson_type = self.lesson_types[task.lesson_type_id]
         
-        if hasattr(group, 'default_room') and group.default_room and not lesson_type.requires_special_room:
+        # Проверяем, есть ли у группы default_room и не требует ли занятие спец. аудиторию
+        if hasattr(group, 'default_room') and group.default_room and not (hasattr(lesson_type, 'requires_special_room') and lesson_type.requires_special_room):
             return [group.default_room]
         
         suitable = [r for r in self.rooms if r.capacity >= group.student_count]
@@ -180,36 +204,31 @@ class CSPScheduler:
         suitable_rooms = self._get_suitable_rooms(task)
         if not suitable_teachers or not suitable_rooms: return
 
-        weeks = sorted(self.week_ids, key=lambda wid: self.task_weekly_count.get((task.group_id, task.subject_id, wid), 0))
-        times = [1, 2, 0, 3, 4, 5, 6]
+        # ИСПРАВЛЕНИЕ: Перебираем недели и дни в случайном порядке для лучшего распределения
+        shuffled_week_ids = list(self.week_ids)
+        random.shuffle(shuffled_week_ids)
         
-        for week_id in weeks:
+        times = [1, 2, 0, 3, 4, 5, 6] # Предпочтение дневным парам
+        
+        for week_id in shuffled_week_ids:
+            # 1. Проверка лимита часов в неделю
             if self.task_weekly_count.get((task.group_id, task.subject_id, week_id), 0) >= task.hours_per_week:
                 continue
+            
+            shuffled_days = list(range(5))
+            random.shuffle(shuffled_days)
 
-            days = list(range(5))
-            random.shuffle(days)
-            for day in days:
+            for day in shuffled_days:
+                # 2. Проверка лимита пар в день
                 if self.group_daily_count.get((task.group_id, week_id, day), 0) >= self.max_lessons_per_day:
                     continue
 
-                is_too_close = False
+                # 3. ИСПРАВЛЕНИЕ: Новая, более простая и надежная проверка перерыва между занятиями
                 current_day_index = self.week_id_to_index[week_id] * 5 + day
-                # ИСПРАВЛЕНИЕ: Используем self.min_days_between_lessons вместо глобальной константы
-                for day_offset in range(-self.min_days_between_lessons + 1, self.min_days_between_lessons):
-                    if day_offset == 0: continue
-                    check_day_idx = current_day_index + day_offset
-                    if 0 <= check_day_idx < len(self.weeks) * 5:
-                        check_week_idx, check_day = divmod(check_day_idx, 5)
-                        check_week_id = self.week_ids[check_week_idx]
-                        for t in range(7):
-                            check_slot = TimeSlot(check_week_id, check_day, t)
-                            if check_slot in self.group_busy[task.group_id]:
-                                if any(a['subject_id'] == task.subject_id for a in self.solution if a['slot'] == check_slot and a['group_id'] == task.group_id):
-                                    is_too_close = True
-                                    break
-                        if is_too_close: break
-                if is_too_close: continue
+                last_day_index = self.group_subject_last_day_index.get((task.group_id, task.subject_id))
+                
+                if last_day_index is not None and abs(current_day_index - last_day_index) < self.min_days_between_lessons:
+                    continue
 
                 for time in times:
                     slot = TimeSlot(week_id, day, time)
@@ -224,21 +243,45 @@ class CSPScheduler:
                             yield (slot, teacher_id, room.id)
 
     def _assign(self, task: LessonTask, slot: TimeSlot, teacher_id: int, room_id: int):
-        self.solution.append({'task': task, 'slot': slot, 'teacher_id': teacher_id, 'room_id': room_id, 'group_id': task.group_id, 'subject_id': task.subject_id})
+        """Назначает слот и обновляет ВСЕ структуры состояния."""
+        self.solution.append({
+            'task': task, 'slot': slot, 'teacher_id': teacher_id, 'room_id': room_id, 
+            'group_id': task.group_id, 'subject_id': task.subject_id
+        })
         self.group_busy[task.group_id].add(slot)
         self.teacher_busy[teacher_id].add(slot)
         self.room_busy[room_id].add(slot)
         self.group_daily_count[(task.group_id, slot.week_id, slot.day)] += 1
         self.task_weekly_count[(task.group_id, task.subject_id, slot.week_id)] += 1
+        
+        # ИСПРАВЛЕНИЕ: Обновляем день последнего занятия для этой пары (группа, предмет)
+        day_index = self.week_id_to_index[slot.week_id] * 5 + slot.day
+        # Сохраняем предыдущее значение, чтобы можно было откатиться
+        prev_day_index = self.group_subject_last_day_index.get((task.group_id, task.subject_id))
+        self.solution[-1]['prev_day_index'] = prev_day_index # Сохраняем в словаре назначения
+        self.group_subject_last_day_index[(task.group_id, task.subject_id)] = day_index
+
 
     def _unassign(self):
+        """Отменяет последнее назначение и ВОССТАНАВЛИВАЕТ ВСЕ структуры состояния."""
         last_assignment = self.solution.pop()
         task, slot, teacher_id, room_id = last_assignment['task'], last_assignment['slot'], last_assignment['teacher_id'], last_assignment['room_id']
+        
         self.group_busy[task.group_id].remove(slot)
         self.teacher_busy[teacher_id].remove(slot)
         self.room_busy[room_id].remove(slot)
         self.group_daily_count[(task.group_id, slot.week_id, slot.day)] -= 1
         self.task_weekly_count[(task.group_id, task.subject_id, slot.week_id)] -= 1
+
+        # ИСПРАВЛЕНИЕ: Восстанавливаем предыдущее значение дня последнего занятия
+        prev_day_index = last_assignment.get('prev_day_index')
+        if prev_day_index is not None:
+            self.group_subject_last_day_index[(task.group_id, task.subject_id)] = prev_day_index
+        else:
+            # Если предыдущего значения не было, просто удаляем ключ
+            if (task.group_id, task.subject_id) in self.group_subject_last_day_index:
+                del self.group_subject_last_day_index[(task.group_id, task.subject_id)]
+
 
     def _backtrack(self, assignment_index: int) -> bool:
         """Рекурсия по плоскому списку индивидуальных занятий."""
@@ -263,60 +306,50 @@ class CSPScheduler:
         return False
 
     def generate(self) -> Dict:
+        """Основной метод генерации расписания."""
         print("\n" + "="*70)
-        print("🎯 CSP ПЛАНИРОВЩИК (КОРРЕКТНАЯ ВЕРСИЯ)")
+        print("🎯 CSP ПЛАНИРОВЩИК (ГЛОБАЛЬНОЕ РАСПРЕДЕЛЕНИЕ)")
         print(f"   - Макс. пар в день: {self.max_lessons_per_day}")
         print(f"   - Перерыв между предметами: {self.min_days_between_lessons} дн.")
         print("="*70)
         
         self.start_time = datetime.now()
         
-        print("\n🔍 Запуск алгоритма backtracking...\n")
-        success = self._backtrack(0)
-        
-        elapsed = (datetime.now() - self.start_time).total_seconds()
-        
-        print("\n" + "="*70)
-        
-        if success:
-            print(f"✅ РАСПИСАНИЕ УСПЕШНО СОСТАВЛЕНО! ({len(self.solution)} занятий)")
-            print("="*70)
+        try:
+            print("\n🔍 Запуск алгоритма backtracking...\n")
+            success = self._backtrack(0)
+            elapsed = (datetime.now() - self.start_time).total_seconds()
             
-            result_lessons = []
-            for a in self.solution:
-                task, slot = a['task'], a['slot']
-                result_lessons.append({
-                    'group_id': task.group_id, 'subject_id': task.subject_id,
-                    'lesson_type_id': task.lesson_type_id, 'teacher_id': a['teacher_id'],
-                    'room_id': a['room_id'], 'week_id': slot.week_id, 'day': slot.day, 'time_slot': slot.time
-                })
+            print("\n" + "="*70)
+            
+            if success:
+                print(f"✅ РАСПИСАНИЕ УСПЕШНО СОСТАВЛЕНО! ({len(self.solution)} занятий)")
+                result_lessons = []
+                for a in self.solution:
+                    task, slot = a['task'], a['slot']
+                    result_lessons.append({
+                        'group_id': task.group_id, 'subject_id': task.subject_id,
+                        'lesson_type_id': task.lesson_type_id, 'teacher_id': a['teacher_id'],
+                        'room_id': a['room_id'], 'week_id': slot.week_id, 'day': slot.day, 'time_slot': slot.time
+                    })
+                return {
+                    'lessons': result_lessons, 'fitness': 1.0, 'conflicts': [],
+                    'method': 'csp_backtracking_global', 'iterations': self.iterations, 'time': elapsed
+                }
+            else:
+                print("❌ НЕ УДАЛОСЬ СОСТАВИТЬ РАСПИСАНИЕ")
+                progress = (len(self.solution) / len(self.assignments_to_schedule) * 100) if self.assignments_to_schedule else 0
+                return {
+                    'lessons': [], 'fitness': progress / 100,
+                    'conflicts': [{'type': 'no_solution_found', 'message': f'Не удалось найти полное решение. Прогресс: {progress:.1f}%'}],
+                    'method': 'csp_backtracking_global', 'iterations': self.iterations, 'time': elapsed
+                }
 
-            print(f"📊 Статистика:")
-            print(f"   • Итераций: {self.iterations:,}")
-            print(f"   • Время: {elapsed:.2f} сек")
-            print(f"   • Конфликтов: 0 (гарантировано)")
-            print("="*70)
-            
+        except Exception as e:
+            print("\n‼️ КРИТИЧЕСКАЯ ОШИБКА ВО ВРЕМЯ ГЕНЕРАЦИИ ‼️")
+            traceback.print_exc()
             return {
-                'lessons': result_lessons, 'fitness': 1.0, 'conflicts': [],
-                'method': 'csp_backtracking_correct', 'iterations': self.iterations, 'time': elapsed
-            }
-        else:
-            print("❌ НЕ УДАЛОСЬ СОСТАВИТЬ РАСПИСАНИЕ")
-            print("="*70)
-            progress = (len(self.solution) / len(self.assignments_to_schedule) * 100) if self.assignments_to_schedule else 0
-            
-            print(f"📊 Прогресс: {progress:.1f}% ({len(self.solution)}/{len(self.assignments_to_schedule)} занятий)")
-            print(f"   • Итераций: {self.iterations:,} (возможно, достигнут лимит)")
-            print(f"   • Время: {elapsed:.2f} сек")
-            
-            print(f"\n🔍 Возможные причины:")
-            print(f"   • Чрезмерно строгие ограничения (мало пар в день, слишком большой перерыв между предметами).")
-            print(f"   • Нехватка аудиторий/преподавателей для предметов с высокой нагрузкой.")
-            print(f"   • Слишком большая общая нагрузка на группы, не помещающаяся в сетку.")
-            
-            return {
-                'lessons': [], 'fitness': progress / 100,
-                'conflicts': [{'type': 'no_solution_found', 'message': f'Не удалось найти полное решение. Прогресс: {progress:.1f}%'}],
-                'method': 'csp_backtracking_correct', 'iterations': self.iterations, 'time': elapsed
+                'lessons': [], 'fitness': 0.0,
+                'conflicts': [{'type': 'exception', 'message': f'Произошла внутренняя ошибка: {str(e)}'}],
+                'method': 'csp_backtracking_global', 'iterations': self.iterations, 'time': 0
             }

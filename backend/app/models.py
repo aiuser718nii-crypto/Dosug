@@ -375,6 +375,9 @@ class LessonType(db.Model):
         return f'<LessonType {self.name}>'
 
 class LessonTypeLoad(db.Model):
+    """
+    Конкретная нагрузка по типу занятия для связки "группа-предмет".
+    """
     __tablename__ = 'lesson_type_load'
     id = db.Column(db.Integer, primary_key=True)
     
@@ -389,6 +392,16 @@ class LessonTypeLoad(db.Model):
 
     # Отношения для удобного доступа
     lesson_type = db.relationship('LessonType')
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Конвертация в словарь"""
+        return {
+            'id': self.id,
+            'lesson_type_id': self.lesson_type_id,
+            'lesson_type_name': self.lesson_type.name if self.lesson_type else None,
+            'lesson_type_code': self.lesson_type.code.value if self.lesson_type and self.lesson_type.code else None,
+            'hours_per_week': self.hours_per_week
+        }
 
     def __repr__(self):
         return f'<Load: GS_ID={self.group_subject_id}, Type={self.lesson_type_id}, Hours={self.hours_per_week}>'
@@ -691,26 +704,19 @@ class SubjectEquipment(db.Model):
         return f'<SubjectEquipment {self.equipment_type}>'
 
 
+# Замените ваш класс Group на этот:
+
 class Group(db.Model):
     """
     Модель группы студентов
-    
-    Attributes:
-        id: Уникальный идентификатор
-        name: Название группы
-        course: Курс обучения
-        student_count: Количество студентов
-        specialization: Специализация
-        group_subjects: Предметы группы
     """
     __tablename__ = 'group'
     
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(50), nullable=False, unique=True, index=True)
-    course = db.Column(db.Integer, index=True)  # 1, 2, 3, 4
+    course = db.Column(db.Integer, index=True)
     student_count = db.Column(db.Integer, nullable=False)
     default_room_id = db.Column(db.Integer, db.ForeignKey('room.id'))
-    group_subjects = db.relationship('GroupSubject', backref='group', lazy='dynamic', cascade="all, delete-orphan")
     
     # Дополнительная информация
     specialization = db.Column(db.String(100))
@@ -729,7 +735,7 @@ class Group(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     notes = db.Column(db.Text)
     
-    # Связи
+    # Связи (оставляем только одно определение)
     group_subjects = db.relationship(
         'GroupSubject',
         back_populates='group',
@@ -739,165 +745,98 @@ class Group(db.Model):
     default_room = db.relationship(
         'Room', 
         foreign_keys=[default_room_id]
-        )
+    )
     
     @hybrid_property
     def total_hours_per_week(self) -> int:
-        """Общее количество часов в неделю"""
-        return sum(gs.hours_per_week for gs in self.group_subjects.all())
+        """Общее количество часов в неделю, рассчитанное по новой модели"""
+        total = 0
+        for gs in self.group_subjects.all():
+            for load in gs.lesson_type_loads.all():
+                total += load.hours_per_week
+        return total
     
     @hybrid_property
     def subject_list(self) -> List:
         """Список предметов группы"""
-        return [gs.subject for gs in self.group_subjects.all()]
+        return [gs.subject for gs in self.group_subjects.all() if gs.subject]
 
     def has_subject(self, subject_id: int) -> bool:
-        """
-        Проверить, изучает ли группа предмет
-        
-        Args:
-            subject_id: ID предмета
-            
-        Returns:
-            True если изучает, False если нет
-        """
+        """Проверить, изучает ли группа предмет"""
         return self.group_subjects.filter_by(subject_id=subject_id).first() is not None
-    
-    def get_subject_hours(self, subject_id: int) -> int:
-        """
-        Получить количество часов предмета в неделю
-        
-        Args:
-            subject_id: ID предмета
-            
-        Returns:
-            Количество часов
-        """
-        gs = self.group_subjects.filter_by(subject_id=subject_id).first()
-        return gs.hours_per_week if gs else 0
     
     def to_dict(self, include_details: bool = False) -> Dict[str, Any]:
         """Конвертация в словарь"""
-            # Собираем список предметов с проверкой на существование   
-        subjects_list = []
-            
-        for gs in self.group_subjects.all():
-                # ИСПРАВЛЕНИЕ: Проверяем, что предмет существует
-                if gs.subject:
-                    subjects_list.append({
-                        'subject_id': gs.subject_id,
-                        'subject_name': gs.subject.name,
-                        'subject_code': gs.subject.code,
-                        'hours_per_week': gs.hours_per_week,
-                        'lesson_type': gs.lesson_type
-                    })
-                else:
-                    # Логируем проблему для отладки
-                    print(f"WARNING: GroupSubject (id={gs.id}) references non-existent subject_id={gs.subject_id} for group '{self.name}'")
-                    # Опционально: добавляем запись с заглушкой
-                    subjects_list.append({
-                        'subject_id': gs.subject_id,
-                        'subject_name': f'[УДАЛЁННЫЙ ПРЕДМЕТ ID:{gs.subject_id}]',
-                        'subject_code': 'DELETED',
-                        'hours_per_week': gs.hours_per_week,
-                        'lesson_type': gs.lesson_type
-                    })
-
         result = {
-                'id': self.id,
-                'name': self.name,
-                'course': self.course,
-                'student_count': self.student_count,
-                'specialization': self.specialization,
-                'faculty': self.faculty,
-                'is_active': self.is_active,
-                'subjects': subjects_list
-            }
+            'id': self.id,
+            'name': self.name,
+            'course': self.course,
+            'student_count': self.student_count,
+            'specialization': self.specialization,
+            'faculty': self.faculty,
+            'is_active': self.is_active,
+        }
 
         if include_details:
-                result['total_hours_per_week'] = self.total_hours_per_week
-                result['max_lessons_per_day'] = self.max_lessons_per_day
-                result['prefer_morning'] = self.prefer_morning
-                result['notes'] = self.notes
-                result['start_year'] = self.start_year
+            result['subjects'] = [gs.to_dict() for gs in self.group_subjects.all()]
+            result['total_hours_per_week'] = self.total_hours_per_week
+            result['max_lessons_per_day'] = self.max_lessons_per_day
+            result['prefer_morning'] = self.prefer_morning
+            result['notes'] = self.notes
+            result['start_year'] = self.start_year
 
         return result
 
     def __repr__(self):
-                return f'<Group {self.name}>'
+        return f'<Group {self.name}>'
 
 
 class GroupSubject(db.Model):
     """
-    Связь между группой и предметом
-    
-    Определяет, какие предметы изучает группа и сколько часов
+    Связь между группой и предметом.
+    Эта модель является "контейнером" для конкретных видов нагрузки.
     """
     __tablename__ = 'group_subject'
     __table_args__ = (
-        UniqueConstraint('group_id', 'subject_id', 'lesson_type', name='unique_group_subject_type'),
+        UniqueConstraint('group_id', 'subject_id', name='unique_group_subject'),
     )
-    
 
-    group_id = db.Column(db.Integer, db.ForeignKey('group.id'), nullable=False)
-    subject_id = db.Column(db.Integer, db.ForeignKey('subject.id'), nullable=False)
     id = db.Column(db.Integer, primary_key=True)
     group_id = db.Column(db.Integer, db.ForeignKey('group.id', ondelete='CASCADE'), nullable=False)
     subject_id = db.Column(db.Integer, db.ForeignKey('subject.id', ondelete='CASCADE'), nullable=False)
-    hours_per_week = db.Column(db.Integer, nullable=False)
-    lecture_hours = db.Column(db.Integer, default=0)
-    seminar_hours = db.Column(db.Integer, default=0)
-    lab_hours = db.Column(db.Integer, default=0)
-    practice_hours = db.Column(db.Integer, default=0)
-    field_trip_hours = db.Column(db.Integer, default=0)
-    exercises_hours = db.Column(db.Integer, default=0)
-    individual_hours = db.Column(db.Integer, default=0)
     
-    @property
-    def total_hours(self):
-        return (self.lecture_hours + self.seminar_hours + self.lab_hours + 
-                self.practice_hours + self.field_trip_hours + 
-                self.exercises_hours + self.individual_hours)
-
-    # Тип занятий
-    lesson_type = db.Column(db.String(20), default='mixed')  # lecture, practice, lab, mixed
-    
-    # Семестр
-    semester = db.Column(db.Integer)  # 1-8
-    
-    # Дополнительные настройки
-    requires_split = db.Column(db.Boolean, default=False)  # Разделение на подгруппы
-    subgroup_count = db.Column(db.Integer, default=1)
+    # Дополнительные настройки для всей связки, если нужно
+    semester_number = db.Column(db.Integer)  # Номер семестра (1-8), в котором изучается предмет
     
     # Метаданные
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
+
     # Связи
     group = db.relationship('Group', back_populates='group_subjects')
     subject = db.relationship('Subject')
-    lesson_type_loads = db.relationship('LessonTypeLoad', backref='group_subject', lazy='dynamic', cascade="all, delete-orphan")
-
-    def __repr__(self):
-        return f'<GroupSubject Group={self.group_id} Subject={self.subject_id}>'
+    
+    # Это отношение к новой таблице, где хранится вся нагрузка.
+    lesson_type_loads = db.relationship(
+        'LessonTypeLoad', 
+        backref='group_subject', 
+        lazy='dynamic', 
+        cascade="all, delete-orphan"
+    )
 
     def to_dict(self) -> Dict[str, Any]:
         """Конвертация в словарь"""
         return {
             'id': self.id,
             'group_id': self.group_id,
-            'group_name': self.group.name,
+            'group_name': self.group.name if self.group else None,
             'subject_id': self.subject_id,
-            'subject_name': self.subject.name,
-            'hours_per_week': self.hours_per_week,
-            'lesson_type': self.lesson_type,
-            'semester': self.semester,
-            'requires_split': self.requires_split,
-            'subgroup_count': self.subgroup_count
+            'subject_name': self.subject.name if self.subject else None,
+            'semester_number': self.semester_number,
+            'loads': [load.to_dict() for load in self.lesson_type_loads.all()]
         }
-    
+
     def __repr__(self):
         return f'<GroupSubject group={self.group_id} subject={self.subject_id}>'
-
 
 class LessonExtended(db.Model):
     """
