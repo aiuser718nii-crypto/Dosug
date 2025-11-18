@@ -374,6 +374,27 @@ class LessonType(db.Model):
     def __repr__(self):
         return f'<LessonType {self.name}>'
 
+class LessonTypeLoad(db.Model):
+    __tablename__ = 'lesson_type_load'
+    id = db.Column(db.Integer, primary_key=True)
+    
+    # Связь с конкретным предметом у конкретной группы
+    group_subject_id = db.Column(db.Integer, db.ForeignKey('group_subject.id'), nullable=False)
+    
+    # Связь с типом занятия (лекция, семинар и т.д.)
+    lesson_type_id = db.Column(db.Integer, db.ForeignKey('lesson_type.id'), nullable=False)
+    
+    # Сколько часов этого типа в неделю
+    hours_per_week = db.Column(db.Integer, nullable=False, default=0)
+
+    # Отношения для удобного доступа
+    lesson_type = db.relationship('LessonType')
+
+    def __repr__(self):
+        return f'<Load: GS_ID={self.group_subject_id}, Type={self.lesson_type_id}, Hours={self.hours_per_week}>'
+
+
+
 
 class LessonTypeConstraint(db.Model):
     """
@@ -689,7 +710,8 @@ class Group(db.Model):
     course = db.Column(db.Integer, index=True)  # 1, 2, 3, 4
     student_count = db.Column(db.Integer, nullable=False)
     default_room_id = db.Column(db.Integer, db.ForeignKey('room.id'))
-
+    group_subjects = db.relationship('GroupSubject', backref='group', lazy='dynamic', cascade="all, delete-orphan")
+    
     # Дополнительная информация
     specialization = db.Column(db.String(100))
     faculty = db.Column(db.String(100))
@@ -816,6 +838,9 @@ class GroupSubject(db.Model):
         UniqueConstraint('group_id', 'subject_id', 'lesson_type', name='unique_group_subject_type'),
     )
     
+
+    group_id = db.Column(db.Integer, db.ForeignKey('group.id'), nullable=False)
+    subject_id = db.Column(db.Integer, db.ForeignKey('subject.id'), nullable=False)
     id = db.Column(db.Integer, primary_key=True)
     group_id = db.Column(db.Integer, db.ForeignKey('group.id', ondelete='CASCADE'), nullable=False)
     subject_id = db.Column(db.Integer, db.ForeignKey('subject.id', ondelete='CASCADE'), nullable=False)
@@ -850,7 +875,11 @@ class GroupSubject(db.Model):
     # Связи
     group = db.relationship('Group', back_populates='group_subjects')
     subject = db.relationship('Subject')
-    
+    lesson_type_loads = db.relationship('LessonTypeLoad', backref='group_subject', lazy='dynamic', cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f'<GroupSubject Group={self.group_id} Subject={self.subject_id}>'
+
     def to_dict(self) -> Dict[str, Any]:
         """Конвертация в словарь"""
         return {
@@ -899,7 +928,7 @@ class LessonExtended(db.Model):
     location = db.Column(db.String(200))  # Для выездов
     notes = db.Column(db.Text)
     week = db.relationship('Week', back_populates='lessons')
-    
+
     # Связи
     schedule = db.relationship('Schedule')
     week = db.relationship('Week', back_populates='lessons')

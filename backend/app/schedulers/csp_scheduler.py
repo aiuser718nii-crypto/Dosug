@@ -18,17 +18,13 @@ import random
 # Предполагается, что эти модели импортированы из вашего Flask-приложения
 from app.models import Teacher, Room, Group, Subject, Semester, Week, LessonType
 
-# НОВЫЙ ПАРАМЕТР: Минимальное количество дней между занятиями по одной и той же дисциплине для одной группы.
-# 1 = можно ставить на следующий день, 2 = должен быть хотя бы один день перерыва.
-MIN_DAYS_BETWEEN_SAME_SUBJECT = 2
-
 
 class TimeSlot:
     """Временной слот в расписании (неделя + день + пара)"""
     def __init__(self, week_id: int, day: int, time: int):
         self.week_id = week_id
-        self.day = day  # 0-4 (Пн-Пт)
-        self.time = time  # 0-6 (7 пар в день)
+        self.day = day
+        self.time = time
     
     def __hash__(self):
         return hash((self.week_id, self.day, self.time))
@@ -42,28 +38,31 @@ class TimeSlot:
 
 
 class LessonTask:
-    """Задача планирования ОДНОГО занятия, связанная с родительской задачей по дисциплине."""
+    """Задача планирования ОДНОГО занятия."""
     def __init__(self, group_id: int, subject_id: int, lesson_type_id: int, hours_per_week: int):
         self.group_id = group_id
         self.subject_id = subject_id
         self.lesson_type_id = lesson_type_id
         self.hours_per_week = hours_per_week
-        # weekly_count и assignments теперь будут управляться в CSPScheduler для простоты
     
     def __repr__(self):
-        return (f"LessonTask(group={self.group_id}, subject={self.subject_id}, "
-                f"type={self.lesson_type_id}, h/w={self.hours_per_week})")
+        return f"LessonTask(group={self.group_id}, subject={self.subject_id}, type={self.lesson_type_id}, h/w={self.hours_per_week})"
 
 
 class CSPScheduler:
     """
     CSP планировщик с корректным backtracking, равномерным распределением и чередованием.
     """
-    def __init__(self, semester_id: int, max_iterations: int = 1000000, max_lessons_per_day: int = 5):
+    # ИСПРАВЛЕНИЕ: Добавляем 'min_days_between_lessons' в конструктор
+    def __init__(self, semester_id: int, max_iterations: int = 1000000, max_lessons_per_day: int = 5, min_days_between_lessons: int = 2):
         self.semester_id = semester_id
         self.max_iterations = max_iterations
         self.iterations = 0
+        
+        # Настройки ограничений
         self.max_lessons_per_day = max_lessons_per_day
+        # ИСПРАВЛЕНИЕ: Сохраняем параметр как атрибут экземпляра
+        self.min_days_between_lessons = min_days_between_lessons
         
         # Данные из БД
         self.semester: Optional[Semester] = None
@@ -75,17 +74,18 @@ class CSPScheduler:
         self.rooms: List[Room] = []
         self.lesson_types: Dict[int, LessonType] = {}
         
-        # ИСПРАВЛЕНИЕ: Плоский список индивидуальных заданий для корректного backtracking
+        # Плоский список индивидуальных заданий
         self.assignments_to_schedule: List[LessonTask] = []
+        self.solution = [] # Здесь будут храниться итоговые назначения
         
         # Состояние планировщика
         self.teacher_busy: Dict[int, Set[TimeSlot]] = defaultdict(set)
         self.room_busy: Dict[int, Set[TimeSlot]] = defaultdict(set)
         self.group_busy: Dict[int, Set[TimeSlot]] = defaultdict(set)
-        self.group_daily_count: Dict[Tuple[int, int, int], int] = defaultdict(int)  # (group_id, week_id, day) -> count
-        self.task_weekly_count: Dict[Tuple[int, int, int], int] = defaultdict(int) # (group_id, subject_id, week_id) -> count
+        self.group_daily_count: Dict[Tuple[int, int, int], int] = defaultdict(int)
+        self.task_weekly_count: Dict[Tuple[int, int, int], int] = defaultdict(int)
 
-        # Кэши для быстрого доступа
+        # Кэши
         self.subject_teachers: Dict[int, List[int]] = defaultdict(list)
         self.group_dict: Dict[int, Group] = {}
         self.subject_dict: Dict[int, Subject] = {}
@@ -131,7 +131,7 @@ class CSPScheduler:
         self._create_assignments()
 
     def _create_assignments(self):
-        """ИСПРАВЛЕНИЕ: Создание плоского списка индивидуальных занятий."""
+        """Создание плоского списка индивидуальных занятий."""
         print("\n📋 Создание атомарных задач для планирования...")
         
         all_tasks_definitions = []
@@ -152,17 +152,12 @@ class CSPScheduler:
                     l_type = next((lt for lt in self.lesson_types.values() if lt.code.value == type_name), None)
                     if not l_type or not self.subject_teachers[gs.subject_id]: continue
                     
-                    # Создаем N копий задачи, где N - общее количество часов
                     total_hours = hours * len(self.weeks)
                     task_def = LessonTask(group.id, gs.subject_id, l_type.id, hours)
                     all_tasks_definitions.extend([task_def] * total_hours)
                     print(f"   • Добавлено {total_hours} занятий: {group.name} / {gs.subject.name} / {type_name}")
         
-        # Сортируем задачи по эвристике (самые сложные - сначала)
-        all_tasks_definitions.sort(key=lambda t: (
-            len(self._get_suitable_teachers(t)),
-            -t.hours_per_week
-        ))
+        all_tasks_definitions.sort(key=lambda t: (len(self._get_suitable_teachers(t)), -t.hours_per_week))
         self.assignments_to_schedule = all_tasks_definitions
         print(f"\n   📊 Всего занятий для планирования: {len(self.assignments_to_schedule)}")
     
@@ -180,9 +175,7 @@ class CSPScheduler:
         return suitable if suitable else self.rooms
 
     def _get_domain(self, task: LessonTask) -> Generator[Tuple[TimeSlot, int, int], None, None]:
-        """
-        Генератор, который возвращает все возможные значения (слот, препод, аудитория) для одного занятия.
-        """
+        """Генератор, который возвращает все возможные значения для одного занятия."""
         suitable_teachers = self._get_suitable_teachers(task)
         suitable_rooms = self._get_suitable_rooms(task)
         if not suitable_teachers or not suitable_rooms: return
@@ -191,22 +184,20 @@ class CSPScheduler:
         times = [1, 2, 0, 3, 4, 5, 6]
         
         for week_id in weeks:
-            # 1. Проверка лимита часов в неделю
             if self.task_weekly_count.get((task.group_id, task.subject_id, week_id), 0) >= task.hours_per_week:
                 continue
 
             days = list(range(5))
             random.shuffle(days)
             for day in days:
-                # 2. Проверка лимита пар в день
                 if self.group_daily_count.get((task.group_id, week_id, day), 0) >= self.max_lessons_per_day:
                     continue
 
-                # 3. НОВОЕ: Проверка чередования предметов
                 is_too_close = False
                 current_day_index = self.week_id_to_index[week_id] * 5 + day
-                # Проверяем занятость группы в ближайшие дни
-                for day_offset in range(-MIN_DAYS_BETWEEN_SAME_SUBJECT + 1, MIN_DAYS_BETWEEN_SAME_SUBJECT):
+                # ИСПРАВЛЕНИЕ: Используем self.min_days_between_lessons вместо глобальной константы
+                for day_offset in range(-self.min_days_between_lessons + 1, self.min_days_between_lessons):
+                    if day_offset == 0: continue
                     check_day_idx = current_day_index + day_offset
                     if 0 <= check_day_idx < len(self.weeks) * 5:
                         check_week_idx, check_day = divmod(check_day_idx, 5)
@@ -214,7 +205,6 @@ class CSPScheduler:
                         for t in range(7):
                             check_slot = TimeSlot(check_week_id, check_day, t)
                             if check_slot in self.group_busy[task.group_id]:
-                                # Если в этом слоте тот же предмет, то конфликт
                                 if any(a['subject_id'] == task.subject_id for a in self.solution if a['slot'] == check_slot and a['group_id'] == task.group_id):
                                     is_too_close = True
                                     break
@@ -223,8 +213,6 @@ class CSPScheduler:
 
                 for time in times:
                     slot = TimeSlot(week_id, day, time)
-                    
-                    # 4. Проверка основных конфликтов (слот занят)
                     if slot in self.group_busy[task.group_id]: continue
                     
                     for teacher_id in random.sample(suitable_teachers, len(suitable_teachers)):
@@ -253,12 +241,12 @@ class CSPScheduler:
         self.task_weekly_count[(task.group_id, task.subject_id, slot.week_id)] -= 1
 
     def _backtrack(self, assignment_index: int) -> bool:
-        """ИСПРАВЛЕНИЕ: Рекурсия по плоскому списку индивидуальных занятий."""
+        """Рекурсия по плоскому списку индивидуальных занятий."""
         self.iterations += 1
         if self.iterations > self.max_iterations: return False
         
         if assignment_index >= len(self.assignments_to_schedule):
-            return True # Все занятия успешно размещены
+            return True
         
         if self.iterations % 50000 == 0:
             progress = (assignment_index / len(self.assignments_to_schedule) * 100)
@@ -268,22 +256,20 @@ class CSPScheduler:
         
         for slot, teacher_id, room_id in self._get_domain(task):
             self._assign(task, slot, teacher_id, room_id)
-            
             if self._backtrack(assignment_index + 1):
                 return True
-            
-            self._unassign() # Откат
+            self._unassign()
             
         return False
 
     def generate(self) -> Dict:
         print("\n" + "="*70)
         print("🎯 CSP ПЛАНИРОВЩИК (КОРРЕКТНАЯ ВЕРСИЯ)")
+        print(f"   - Макс. пар в день: {self.max_lessons_per_day}")
+        print(f"   - Перерыв между предметами: {self.min_days_between_lessons} дн.")
         print("="*70)
         
         self.start_time = datetime.now()
-        self.iterations = 0
-        self.solution = [] # Здесь будем хранить итоговые назначения
         
         print("\n🔍 Запуск алгоритма backtracking...\n")
         success = self._backtrack(0)
@@ -321,11 +307,11 @@ class CSPScheduler:
             progress = (len(self.solution) / len(self.assignments_to_schedule) * 100) if self.assignments_to_schedule else 0
             
             print(f"📊 Прогресс: {progress:.1f}% ({len(self.solution)}/{len(self.assignments_to_schedule)} занятий)")
-            print(f"   • Итераций: {self.iterations:,} (достигнут лимит)")
+            print(f"   • Итераций: {self.iterations:,} (возможно, достигнут лимит)")
             print(f"   • Время: {elapsed:.2f} сек")
             
             print(f"\n🔍 Возможные причины:")
-            print(f"   • Чрезмерно строгие ограничения (мало пар в день, слишком большой `MIN_DAYS_BETWEEN_SAME_SUBJECT`).")
+            print(f"   • Чрезмерно строгие ограничения (мало пар в день, слишком большой перерыв между предметами).")
             print(f"   • Нехватка аудиторий/преподавателей для предметов с высокой нагрузкой.")
             print(f"   • Слишком большая общая нагрузка на группы, не помещающаяся в сетку.")
             

@@ -16,6 +16,7 @@ export default function GenerateSemester() {
   const [progress, setProgress] = useState(null);
   const [error, setError] = useState(null);
 
+  // ИСПРАВЛЕНИЕ: убрали min_lessons_per_day
   const [formData, setFormData] = useState({
     name: '',
     max_iterations: 500000,
@@ -76,6 +77,7 @@ export default function GenerateSemester() {
       
       const year = academicYears.find(y => y.id === selectedSemester.academic_year_id);
       
+      // ИСПРАВЛЕНИЕ: убрали min_lessons_per_day из отправляемых данных
       const data = {
         semester_id: selectedSemester.id,
         name: formData.name,
@@ -241,6 +243,7 @@ export default function GenerateSemester() {
                 <span>Основные ограничения</span>
               </h3>
               
+              {/* ИСПРАВЛЕНИЕ: Убрали поле min_lessons_per_day */}
               <div className="grid md:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">

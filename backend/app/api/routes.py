@@ -809,10 +809,11 @@ def generate_semester_schedule():
         max_lessons_per_day = data.get('max_lessons_per_day', 4)
 
         scheduler = CSPScheduler(
-            semester_id=semester_id,
-            max_iterations=max_iterations,
-            min_lessons_per_day=min_lessons_per_day,
-            max_lessons_per_day=max_lessons_per_day
+            semester_id=data['semester_id'],
+            max_iterations=data.get('max_iterations', 500000),
+            max_lessons_per_day=data.get('max_lessons_per_day', 5),
+            # Важно: передаем новый параметр min_days_between_lessons, если он есть
+            min_days_between_lessons=data.get('min_days_between_lessons', 2)
         )
         
         result = scheduler.generate()
