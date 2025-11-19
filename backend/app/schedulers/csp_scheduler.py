@@ -17,7 +17,7 @@ import random
 import traceback
 
 # Предполагается, что эти модели импортированы из вашего Flask-приложения
-from app.models import Teacher, Room, Group, Subject, Semester, Week, LessonType
+from app.models import Teacher, Room, Group, Subject, Semester, Week, LessonType, GroupSubject
 
 
 class TimeSlot:
