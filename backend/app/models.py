@@ -267,7 +267,6 @@ class LessonTypeConstraint(db.Model):
     
     min_days_between = db.Column(db.Integer, default=0)
     max_days_between = db.Column(db.Integer)
-    same_subject_only = db.Column(db.Boolean, default=True)
     
     type_from = db.relationship('LessonType', foreign_keys=[type_from_id])
     type_to = db.relationship('LessonType', foreign_keys=[type_to_id])

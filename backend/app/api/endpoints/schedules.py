@@ -43,7 +43,6 @@ def generate_semester_schedule():
             semester_id=data['semester_id'],
             max_iterations=data.get('max_iterations', 500000),
             max_lessons_per_day=data.get('max_lessons_per_day', 5),
-            min_days_between_lessons=data.get('min_days_between_lessons', 2)
         )
         result = scheduler.generate()
         

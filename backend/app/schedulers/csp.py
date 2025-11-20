@@ -5,7 +5,7 @@ from typing import List, Dict, Tuple, Optional, Generator
 from collections import defaultdict
 
 from app.schedulers.base import BaseScheduler
-from app.models import Semester, Week, LessonType, Group, Teacher, Room, Subject
+from app.models import Semester, Week, LessonType, Group, Teacher, Room, Subject, LessonTypeConstraint
 
 class TimeSlot:
     """Вспомогательный класс для CSP: Временной слот"""
@@ -29,12 +29,11 @@ class CSPScheduler(BaseScheduler):
     CSP (Constraint Satisfaction Problem) планировщик с бэктрекингом.
     """
     def __init__(self, semester_id: int, max_iterations: int = 500000, 
-                 max_lessons_per_day: int = 5, min_days_between_lessons: int = 2):
+                 max_lessons_per_day: int = 5):
         
         self.semester_id = semester_id
         self.max_iterations = max_iterations
         self.max_lessons_per_day = max_lessons_per_day
-        self.min_days_between_lessons = min_days_between_lessons
         
         self.iterations = 0
         self.solution = []
@@ -73,6 +72,12 @@ class CSPScheduler(BaseScheduler):
             for s in t.subjects:
                 self.subject_teachers[s.id].append(t.id)
 
+        # Загружаем ограничения из БД
+        self.constraints = LessonTypeConstraint.query.all()
+        # Преобразуем в удобный для поиска словарь: (type_from_id, type_to_id) -> constraint_object
+        self.constraints_map = {(c.type_from_id, c.type_to_id): c for c in self.constraints}
+        print(f"   Загружено ограничений между типами: {len(self.constraints)}")
+
     def generate(self) -> Dict:
         start_time = time.time()
         print(f"🚀 CSP: Старт генерации для {len(self.db_groups)} групп на {len(self.weeks)} недель")
@@ -99,7 +104,6 @@ class CSPScheduler(BaseScheduler):
             return {'lessons': [], 'fitness': max_progress, 'conflicts': [{'type': 'no_solution', 'message': 'Не удалось найти полное решение'}], 'time': duration, 'iterations': self.iterations}
 
     def _create_assignments(self) -> List[LessonTask]:
-        """Создание плоского списка задач с улучшенной сортировкой."""
         task_groups = defaultdict(list)
         for group in self.db_groups:
             for gs in group.group_subjects:
@@ -108,11 +112,7 @@ class CSPScheduler(BaseScheduler):
                         total_hours = load.hours_per_week * len(self.weeks)
                         task = LessonTask(group.id, gs.subject_id, load.lesson_type_id, load.hours_per_week)
                         task_groups[(group.id, gs.subject_id, load.lesson_type_id)].extend([task] * total_hours)
-
-        sorted_keys = sorted(
-            task_groups.keys(),
-            key=lambda k: (-task_groups[k][0].hours_per_week, len(self.subject_teachers.get(k[1], [])))
-        )
+        sorted_keys = sorted(task_groups.keys(), key=lambda k: (-task_groups[k][0].hours_per_week, len(self.subject_teachers.get(k[1], []))))
         final_tasks = []
         for key in sorted_keys:
             random.shuffle(task_groups[key])
@@ -123,50 +123,43 @@ class CSPScheduler(BaseScheduler):
         suitable_teachers = self.subject_teachers.get(task.subject_id, [])
         group_obj = self.groups.get(task.group_id)
         if not group_obj: return
-
         l_type = self.lesson_types.get(task.lesson_type_id)
-        req_special_room = l_type.requires_special_room if l_type else False
-
+        req_special = l_type.requires_special_room if l_type else False
         available_rooms = [r for r in self.rooms.values() if r.capacity >= group_obj.student_count]
-        
-        suitable_rooms = []
-        if req_special_room:
-            suitable_rooms = [r for r in available_rooms if r.is_special]
-        else:
-            if group_obj.default_room_id:
-                default_room = self.rooms.get(group_obj.default_room_id)
-                if default_room and not default_room.is_special and default_room in available_rooms:
-                    suitable_rooms = [default_room]
-            
-            if not suitable_rooms:
-                suitable_rooms = [r for r in available_rooms if not r.is_special]
-
-        if not suitable_teachers or not suitable_rooms:
-            subject_name = Subject.query.get(task.subject_id).name if task.subject_id else "???"
-            print("="*80)
-            print(f"❌ ТУПИК для задачи:")
-            print(f"  - Группа: {group_obj.name}")
-            print(f"  - Предмет: {subject_name}")
-            if not suitable_teachers:
-                print("  - ПРИЧИНА: Не найдено ни одного подходящего преподавателя для этого предмета.")
-            if not suitable_rooms:
-                room_req = "специальных аудиторий" if req_special_room else "обычных аудиторий"
-                print(f"  - ПРИЧИНА: Не найдено {room_req} вместимостью >= {group_obj.student_count} студентов.")
-            print("="*80)
-            return
+        suitable_rooms = [r for r in available_rooms if r.is_special] if req_special else ([self.rooms.get(group_obj.default_room_id)] if group_obj.default_room_id and not self.rooms.get(group_obj.default_room_id).is_special and self.rooms.get(group_obj.default_room_id) in available_rooms else [r for r in available_rooms if not r.is_special])
+        if not suitable_teachers or not suitable_rooms: return
 
         shuffled_weeks = list(self.week_ids); random.shuffle(shuffled_weeks)
         for week_id in shuffled_weeks:
             weekly_key = (task.group_id, task.subject_id, task.lesson_type_id, week_id)
-            if self.task_weekly_count.get(weekly_key, 0) >= task.hours_per_week:
-                continue
+            if self.task_weekly_count.get(weekly_key, 0) >= task.hours_per_week: continue
             days = list(range(self.days_per_week)); random.shuffle(days)
             for day in days:
                 if self.group_daily_count.get((task.group_id, week_id, day), 0) >= self.max_lessons_per_day: continue
+                
+                # --- УМНАЯ ПРОВЕРКА ОГРАНИЧЕНИЙ ---
                 day_abs_idx = self.week_id_to_index.get(week_id, 0) * self.days_per_week + day
-                key = (task.group_id, task.subject_id, task.lesson_type_id)
-                last_idx = self.group_subject_type_last_day_index.get(key)
-                if last_idx is not None and abs(day_abs_idx - last_idx) < self.min_days_between_lessons: continue
+                conflict_found = False
+                for (g_id, s_id, lt_id), last_idx in self.group_subject_type_last_day_index.items():
+                    if g_id != task.group_id or s_id != task.subject_id: continue
+                    
+                    # Проверяем оба направления: (уже стоит -> новое) и (новое -> уже стоит)
+                    constraint_forward = self.constraints_map.get((lt_id, task.lesson_type_id))
+                    constraint_backward = self.constraints_map.get((task.lesson_type_id, lt_id))
+                    
+                    constraint = constraint_forward or constraint_backward
+                    
+                    if constraint:
+                        days_diff = abs(day_abs_idx - last_idx)
+                        if days_diff < constraint.min_days_between:
+                            conflict_found = True
+                            break
+                        if constraint.max_days_between and days_diff > constraint.max_days_between:
+                            conflict_found = True
+                            break
+                if conflict_found: continue
+                # --- КОНЕЦ ПРОВЕРКИ ---
+
                 times = list(range(self.slots_per_day)); random.shuffle(times)
                 for time_slot in times:
                     slot = TimeSlot(week_id, day, time_slot)
