@@ -825,7 +825,7 @@ def generate_semester_schedule():
         print(f"✅ Создана запись расписания: ID={schedule.id}")
         
         # ИЗМЕНЕНИЕ: Используем CSP планировщик вместо генетического
-        from app.schedulers.csp_scheduler import CSPScheduler
+        from app.schedulers.csp import CSPScheduler
         
         # Параметры (для CSP они не так важны, но можно передать max_iterations)
         max_iterations = data.get('max_iterations', 100000)
