@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify, send_file
 from app._init_ import db
-from app.models import Teacher, Room, Group, Subject, Schedule, Lesson, GroupSubject
+from app.models import Teacher, Room, Group, Subject, Schedule, Lesson, GroupSubject, LessonExtended
 from app.schedulers.genetic import GeneticScheduler
 from app.exporter import ExcelExporter
 import tempfile
@@ -94,16 +94,43 @@ def create_group():
 # ==================== SCHEDULES ====================
 @api_bp.route('/schedules', methods=['GET'])
 def get_schedules():
-    schedules = Schedule.query.order_by(Schedule.created_at.desc()).all()
-    return jsonify([s.to_dict() for s in schedules])
-
+    """Получить все расписания с количеством занятий"""
+    try:
+        schedules = Schedule.query.order_by(Schedule.created_at.desc()).all()
+        
+        result = []
+        for schedule in schedules:
+            # Подсчитываем занятия
+            lessons_count = LessonExtended.query.filter_by(schedule_id=schedule.id).count()
+            
+            schedule_dict = schedule.to_dict()
+            schedule_dict['lessons_count'] = lessons_count
+            
+            result.append(schedule_dict)
+        
+        return jsonify(result)
+    except Exception as e:
+        print(f"Ошибка получения расписаний: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    
 @api_bp.route('/schedules/<int:schedule_id>', methods=['GET'])
 def get_schedule(schedule_id):
-    schedule = Schedule.query.get_or_404(schedule_id)
-    return jsonify({
-        **schedule.to_dict(),
-        'lessons': [l.to_dict() for l in schedule.lessons]
-    })
+    """Получить расписание по ID с занятиями"""
+    try:
+        schedule = Schedule.query.get_or_404(schedule_id)
+        
+        # Подсчитываем занятия
+        lessons_count = LessonExtended.query.filter_by(schedule_id=schedule_id).count()
+        
+        result = schedule.to_dict()
+        result['lessons_count'] = lessons_count
+        
+        return jsonify(result)
+    except Exception as e:
+        print(f"Ошибка получения расписания: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @api_bp.route('/schedules/generate', methods=['POST'])
 def generate_schedule():
@@ -996,3 +1023,27 @@ def get_semester_statistics(semester_id):
         'teacher_load': [{'name': name, 'lessons': count} for name, count in teacher_load],
         'room_usage': [{'name': name, 'lessons': count} for name, count in room_usage]
     })
+
+@api_bp.route('/stats/dashboard', methods=['GET'])
+def get_dashboard_stats():
+    """Получить статистику для главной страницы"""
+    try:
+        from app.models import Teacher, Room, Group, Subject, Schedule, LessonExtended
+        
+        stats = {
+            'teachers': Teacher.query.filter_by(is_active=True).count(),
+            'rooms': Room.query.filter_by(is_active=True).count(),
+            'groups': Group.query.filter_by(is_active=True).count(),
+            'subjects': Subject.query.filter_by(is_active=True).count(),
+            'schedules': Schedule.query.count(),
+            'total_lessons': LessonExtended.query.count(),
+            'active_schedules': Schedule.query.filter_by(status='active').count()
+        }
+        
+        return jsonify(stats)
+        
+    except Exception as e:
+        print(f"Ошибка получения статистики: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500

@@ -1,3 +1,4 @@
+// frontend/src/services/api.js
 import axios from 'axios';
 
 const API_URL = 'http://localhost:5000/api';
@@ -57,29 +58,66 @@ export const groupService = {
 // ==================== SCHEDULES ====================
 export const scheduleService = {
   getAll: () => api.get('/schedules').then(res => res.data),
-  
   getById: (id) => api.get(`/schedules/${id}`).then(res => res.data),
-  
-  generate: (data) => api.post('/schedules/generate', data).then(res => res.data),
+  getExtended: (id) => api.get(`/schedules/${id}/extended`).then(res => res.data),
+  getWeek: (id, weekNumber) => api.get(`/schedules/${id}/week/${weekNumber}`).then(res => res.data),
+  generate: (data) => api.post('/schedules/generate-semester', data).then(res => res.data),
   
   export: async (id) => {
-    const response = await api.get(`/schedules/${id}/export`, {
-      responseType: 'blob'
-    });
-    
-    // Создание ссылки для скачивания
-    const url = window.URL.createObjectURL(new Blob([response.data]));
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `schedule_${id}.xlsx`);
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.URL.revokeObjectURL(url);
+    try {
+      const response = await api.get(`/schedules/${id}/export`, {
+        responseType: 'blob',
+      });
+      
+      const blob = new Blob([response.data], { 
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+      });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `schedule-${id}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error('Export error:', error);
+      throw error;
+    }
   },
   
   delete: (id) => api.delete(`/schedules/${id}`).then(res => res.data),
 };
 
-// Экспорт экземпляра axios для использования в других сервисах
+// ==================== STATS ====================
+export const statsService = {
+  getDashboard: () => api.get('/stats/dashboard').then(res => res.data),
+};
+
+// ==================== LESSON TYPES ====================
+export const lessonTypeService = {
+  getAll: () => api.get('/lesson-types').then(res => res.data),
+  getById: (id) => api.get(`/lesson-types/${id}`).then(res => res.data),
+  create: (data) => api.post('/lesson-types', data).then(res => res.data),
+  update: (id, data) => api.put(`/lesson-types/${id}`, data).then(res => res.data),
+  delete: (id) => api.delete(`/lesson-types/${id}`).then(res => res.data),
+};
+
+// ==================== SEMESTERS ====================
+export const semesterService = {
+  getAll: () => api.get('/semesters').then(res => res.data),
+  getById: (id) => api.get(`/semesters/${id}`).then(res => res.data),
+  getWeeks: (id) => api.get(`/semesters/${id}/weeks`).then(res => res.data),
+  create: (data) => api.post('/semesters', data).then(res => res.data),
+  regenerateWeeks: (id) => api.post(`/semesters/${id}/regenerate-weeks`).then(res => res.data),
+};
+
+// ==================== ACADEMIC YEARS ====================
+export const academicYearService = {
+  getAll: () => api.get('/academic-years').then(res => res.data),
+  create: (data) => api.post('/academic-years', data).then(res => res.data),
+  setCurrent: (id) => api.post(`/academic-years/${id}/set-current`).then(res => res.data),
+};
+
+// Экспорт axios для прямого использования
 export default api;
