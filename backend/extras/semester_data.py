@@ -1,36 +1,14 @@
-# Файл: backend/semester_data.py
-
 """
 Инициализация базовых данных для семестровой системы:
 - Учебные годы
 - Семестры и недели
 - Типы занятий
 - Ограничения между типами занятий
+Запускать как модуль: python -m extras.semester_data
 """
 
-import os
-import sys
 from datetime import date
-
-# --- ИСПРАВЛЕНИЕ ПУТЕЙ ИМПОРТА ---
-try:
-    # Определение пути к папке 'backend'
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    # Если скрипт в папке extras, поднимаемся на уровень выше
-    if os.path.basename(current_dir) == 'extras':
-        backend_dir = os.path.dirname(current_dir)
-    else:
-        backend_dir = current_dir
-    
-    if backend_dir not in sys.path:
-        sys.path.insert(0, backend_dir)
-
-    from app._init_ import create_app, db
-except ImportError as e:
-    print(f"Критическая ошибка: не удалось импортировать 'create_app' или 'db'.")
-    print(f"Детали ошибки: {e}")
-    sys.exit(1)
-
+from app import create_app, db
 from app.models import (
     AcademicYear, Semester, SemesterEnum, 
     LessonType, LessonTypeEnum, LessonTypeConstraint, Week
@@ -45,11 +23,9 @@ def initialize_semester_data():
         print("🎓 ИНИЦИАЛИЗАЦИЯ СИСТЕМЫ СЕМЕСТРОВОГО ПЛАНИРОВАНИЯ")
         print("="*70)
         
-        # --- ОЧИСТКА СТАРЫХ ДАННЫХ (ОПЦИОНАЛЬНО) ---
         confirm = input("\n⚠️  Хотите полностью очистить и пересоздать данные о семестрах и типах занятий? (yes/no): ")
         if confirm.lower() == 'yes':
             print("\n🗑️  Очистка старых данных...")
-            # Удаляем в правильном порядке из-за внешних ключей
             LessonTypeConstraint.query.delete()
             Week.query.delete()
             Semester.query.delete()
@@ -81,7 +57,6 @@ def initialize_semester_data():
         # --- 2. СОЗДАНИЕ СЕМЕСТРОВ ---
         print("\n" + "="*70)
         print("📆 2. Создание семестров...")
-        # Осенний семестр
         fall_semester = Semester.query.filter_by(academic_year_id=academic_year.id, type=SemesterEnum.FALL).first()
         if not fall_semester:
             fall_semester = Semester(
@@ -91,11 +66,10 @@ def initialize_semester_data():
                 end_date=date(2026, 1, 31)
             )
             db.session.add(fall_semester)
-            print(f"   ✅ Создан осенний семестр: {fall_semester.start_date} - {fall_semester.end_date}")
+            print("   ✅ Создан осенний семестр")
         else:
-            print(f"   🔄 Осенний семестр уже существует.")
+            print("   🔄 Осенний семестр уже существует.")
         
-        # Весенний семестр
         spring_semester = Semester.query.filter_by(academic_year_id=academic_year.id, type=SemesterEnum.SPRING).first()
         if not spring_semester:
             spring_semester = Semester(
@@ -105,9 +79,9 @@ def initialize_semester_data():
                 end_date=date(2026, 6, 30)
             )
             db.session.add(spring_semester)
-            print(f"   ✅ Создан весенний семестр: {spring_semester.start_date} - {spring_semester.end_date}")
+            print("   ✅ Создан весенний семестр")
         else:
-            print(f"   🔄 Весенний семестр уже существует.")
+            print("   🔄 Весенний семестр уже существует.")
         db.session.commit()
 
         # --- 3. ГЕНЕРАЦИЯ НЕДЕЛЬ ---

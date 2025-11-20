@@ -1,31 +1,10 @@
-# Файл: backend/check_lessons.py
-
 """
-Скрипт для проверки целостности данных, в первую очередь занятий (Lesson и LessonExtended).
+Скрипт для проверки целостности данных, в первую очередь занятий (Lesson).
 Ищет "битые" ссылки, где занятие ссылается на несуществующую сущность.
+Запускать как модуль: python -m extras.check_lessons
 """
-
-import os
-import sys
-
-# --- ИСПРАВЛЕНИЕ ПУТЕЙ ИМПОРТА ---
-try:
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    if os.path.basename(current_dir) == 'extras':
-        backend_dir = os.path.dirname(current_dir)
-    else:
-        backend_dir = current_dir
-    
-    if backend_dir not in sys.path:
-        sys.path.insert(0, backend_dir)
-
-    from app._init_ import create_app, db
-except ImportError as e:
-    print(f"Критическая ошибка: не удалось импортировать 'create_app' или 'db'.")
-    print(f"Детали ошибки: {e}")
-    sys.exit(1)
-
-from app.models import Lesson, LessonExtended, Week, Group, Subject, Teacher, Room
+from app import create_app, db
+from app.models import Lesson, Week, Group, Subject, Teacher, Room
 
 app = create_app()
 
@@ -47,15 +26,15 @@ def check_data_integrity():
         room_ids = {r.id for r in Room.query.all()}
         print("✅ Справочники загружены.")
 
-        # --- ПРОВЕРКА LESSON_EXTENDED ---
+        # --- ПРОВЕРКА LESSON ---
         print("\n" + "-"*70)
-        print("1. Проверка таблицы 'LessonExtended'...")
-        all_ext_lessons = LessonExtended.query.all()
-        print(f"   Всего занятий в LessonExtended: {len(all_ext_lessons)}")
+        print("Проверка таблицы 'Lesson'...")
+        all_lessons = Lesson.query.all()
+        print(f"   Всего занятий: {len(all_lessons)}")
         
-        broken_ext_lessons = set()
+        broken_lessons = set()
         
-        for lesson in all_ext_lessons:
+        for lesson in all_lessons:
             is_broken = False
             if lesson.week_id not in week_ids:
                 print(f"  ❌ ID {lesson.id}: Битая ссылка на Week ID: {lesson.week_id}")
@@ -74,53 +53,25 @@ def check_data_integrity():
                 is_broken = True
             
             if is_broken:
-                broken_ext_lessons.add(lesson)
-
-        if not broken_ext_lessons:
-            print("   ✅ Все занятия в 'LessonExtended' корректны!")
-        else:
-            print(f"\n   ⚠️  Найдено {len(broken_ext_lessons)} 'битых' занятий в LessonExtended.")
-
-        # --- ПРОВЕРКА LESSON (если используется) ---
-        print("\n" + "-"*70)
-        print("2. Проверка таблицы 'Lesson'...")
-        all_lessons = Lesson.query.all()
-        print(f"   Всего занятий в Lesson: {len(all_lessons)}")
-
-        broken_lessons = set()
-        
-        for lesson in all_lessons:
-            is_broken = False
-            if lesson.group_id not in group_ids:
-                print(f"  ❌ ID {lesson.id}: Битая ссылка на Group ID: {lesson.group_id}")
-                is_broken = True
-            if lesson.subject_id not in subject_ids:
-                print(f"  ❌ ID {lesson.id}: Битая ссылка на Subject ID: {lesson.subject_id}")
-                is_broken = True
-            # ... и так далее для teacher_id, room_id
-            
-            if is_broken:
                 broken_lessons.add(lesson)
 
         if not broken_lessons:
-            print("   ✅ Все занятия в 'Lesson' корректны!")
+            print("   ✅ Все занятия корректны!")
         else:
-            print(f"\n   ⚠️  Найдено {len(broken_lessons)} 'битых' занятий в Lesson.")
+            print(f"\n   ⚠️  Найдено {len(broken_lessons)} 'битых' занятий.")
 
         # --- ПРЕДЛОЖЕНИЕ ОБ ОЧИСТКЕ ---
-        total_broken = broken_ext_lessons.union(broken_lessons)
-        
-        if total_broken:
+        if broken_lessons:
             print("\n" + "="*70)
-            confirm = input(f"❓ Найдено всего {len(total_broken)} 'битых' занятий. Удалить их? (yes/no): ")
+            confirm = input(f"❓ Найдено {len(broken_lessons)} 'битых' занятий. Удалить их? (yes/no): ")
             if confirm.lower() == 'yes':
                 print("\n🗑️  Удаление 'битых' занятий...")
-                for lesson in total_broken:
+                for lesson in broken_lessons:
                     db.session.delete(lesson)
                 
                 try:
                     db.session.commit()
-                    print(f"✅ Успешно удалено {len(total_broken)} занятий.")
+                    print(f"✅ Успешно удалено {len(broken_lessons)} занятий.")
                 except Exception as e:
                     db.session.rollback()
                     print(f"❌ Ошибка при удалении: {e}")

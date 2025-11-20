@@ -2,7 +2,7 @@
 Скрипт для инициализации базы данных и добавления тестовых данных
 """
 
-from app._init_ import create_app, db
+from backend.app import create_app, db
 from app.models import Teacher, Room, Group, Subject, GroupSubject
 
 def init_database():

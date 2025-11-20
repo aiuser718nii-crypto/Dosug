@@ -1,117 +1,93 @@
-# Файл: backend/seed_data.py
-
-import os
-import sys
-from datetime import datetime
-
-# --- НАЧАЛО ИСПРАВЛЕНИЯ ПУТЕЙ ИМПОРТА (НАДЕЖНАЯ ВЕРСИЯ) ---
-try:
-    # Получаем абсолютный путь к текущему файлу
-    current_file_path = os.path.abspath(__file__)
-    # Поднимаемся вверх по дереву каталогов, пока не найдем папку 'backend'
-    backend_dir = current_file_path
-    while os.path.basename(backend_dir) != 'backend':
-        backend_dir = os.path.dirname(backend_dir)
-        if backend_dir == os.path.dirname(backend_dir): # Достигли корня диска
-            raise FileNotFoundError("Не удалось найти корневую папку 'backend'.")
-
-    # Добавляем папку 'backend' в путь поиска Python
-    if backend_dir not in sys.path:
-        sys.path.insert(0, backend_dir)
-    
-    # Теперь импорт должен сработать
-    from app._init_ import create_app, db
-except (ImportError, FileNotFoundError) as e:
-    print(f"Критическая ошибка: не удалось настроить пути и импортировать 'create_app' или 'db'.")
-    print(f"Детали ошибки: {e}")
-    print("Убедитесь, что скрипт находится внутри структуры проекта '.../backend/...'")
-    sys.exit(1)
-# --- КОНЕЦ ИСПРАВЛЕНИЯ ПУТЕЙ ---
-
-
+"""
+Заполняет базу данных группами, связывает их с предметами 
+и определяет учебную нагрузку (по новой модели LessonTypeLoad).
+Запускать как модуль: python -m extras.seed_data
+"""
+from app import create_app, db
 from app.models import Group, Subject, GroupSubject, LessonType, LessonTypeLoad
 
 # --- НАСТРОЙКА ДАННЫХ ---
 # Здесь мы определяем, какие группы существуют и какую нагрузку они имеют
-
-GROUPS_DATA = []
+GROUPS_DATA = [
+    {
+        "name": "ПИ-101", "course": 1, "student_count": 28,
+        "subjects": [
+            { "subject_code": "ВР", "loads": [{"type_code": "lecture", "hours": 2}, {"type_code": "seminar", "hours": 2}] },
+            { "subject_code": "ВС", "loads": [{"type_code": "lecture", "hours": 2}, {"type_code": "lab", "hours": 2}] },
+            { "subject_code": "ВО", "loads": [{"type_code": "practice", "hours": 4}] },
+        ]
+    },
+    {
+        "name": "ИБ-201", "course": 2, "student_count": 25,
+        "subjects": [
+            { "subject_code": "ГИС", "loads": [{"type_code": "lecture", "hours": 2}, {"type_code": "lab", "hours": 4}] },
+            { "subject_code": "ДО", "loads": [{"type_code": "seminar", "hours": 2}] },
+            { "subject_code": "ФП", "loads": [{"type_code": "practice", "hours": 2}] },
+        ]
+    }
+    # Добавь сюда другие группы по аналогии
+]
 
 app = create_app()
 
 def seed_database():
-    """
-    Заполняет базу данных группами, связывает их с предметами и определяет учебную нагрузку.
-    """
+    """Заполняет базу данных группами и их нагрузкой."""
     with app.app_context():
         print("\n" + "="*70)
         print("🌱 ЗАПОЛНЕНИЕ УЧЕБНОЙ НАГРУЗКИ")
         print("="*70 + "\n")
         
-        # Получаем словари для быстрого доступа
         subjects_map = {s.code: s for s in Subject.query.all()}
         lesson_types_map = {lt.code.value: lt for lt in LessonType.query.all()}
 
         if not subjects_map:
-            print("❌ ВНИМАНИЕ: В базе данных нет предметов. Запустите сначала скрипт subjects.py.")
+            print("❌ ВНИМАНИЕ: В базе данных нет предметов. Запустите сначала extras/subjects.py.")
             return
         if not lesson_types_map:
-            print("❌ ВНИМАНИЕ: В базе данных нет типов занятий. Запустите сначала скрипт semester_data.py.")
+            print("❌ ВНИМАНИЕ: В базе данных нет типов занятий. Запустите сначала extras/semester_data.py.")
             return
 
         for group_data in GROUPS_DATA:
-            # --- 1. Создаем или находим группу ---
+            # Создаем или находим группу
             group = Group.query.filter_by(name=group_data["name"]).first()
             if not group:
-                group = Group(
-                    name=group_data["name"],
-                    course=group_data["course"],
-                    student_count=group_data["student_count"],
-                    is_active=True
-                )
+                group = Group(name=group_data["name"], course=group_data["course"], student_count=group_data["student_count"], is_active=True)
                 db.session.add(group)
-                # Нужно закоммитить, чтобы получить group.id для следующего шага
-                db.session.flush()
-                print(f"✅ Создана группа: {group.name} (ID: {group.id})")
+                db.session.flush() # Нужно для получения ID
+                print(f"✅ Создана группа: {group.name}")
             else:
-                print(f"🔄 Найдена существующая группа: {group.name} (ID: {group.id})")
+                print(f"🔄 Найдена существующая группа: {group.name}")
 
-            # --- 2. Обрабатываем предметы и нагрузку для этой группы ---
+            # Обрабатываем предметы и нагрузку
             for subject_data in group_data["subjects"]:
-                subject_code = subject_data["subject_code"]
-                subject = subjects_map.get(subject_code)
-
+                subject = subjects_map.get(subject_data["subject_code"])
                 if not subject:
-                    print(f"  ❌ ВНИМАНИЕ: Предмет с кодом '{subject_code}' не найден в базе. Пропускаем.")
+                    print(f"  ❌ Предмет с кодом '{subject_data['subject_code']}' не найден. Пропуск.")
                     continue
                 
-                # --- 3. Создаем или находим связь GroupSubject ---
+                # Создаем или находим связь GroupSubject
                 group_subject = GroupSubject.query.filter_by(group_id=group.id, subject_id=subject.id).first()
                 if not group_subject:
                     group_subject = GroupSubject(group_id=group.id, subject_id=subject.id)
                     db.session.add(group_subject)
-                    db.session.flush() # Получаем ID для group_subject
-                    print(f"  ✅ Создана связь: '{group.name}' -> '{subject.name}' (GS_ID: {group_subject.id})")
+                    db.session.flush()
                 
-                # --- 4. Очищаем старую нагрузку и создаем новую в LessonTypeLoad ---
+                # Очищаем старую нагрузку и создаем новую в LessonTypeLoad
                 LessonTypeLoad.query.filter_by(group_subject_id=group_subject.id).delete()
-                # db.session.flush() # Применяем удаление немедленно
 
                 for load_data in subject_data["loads"]:
-                    load_type_code = load_data["type_code"]
-                    load_hours = load_data["hours"]
-                    lesson_type = lesson_types_map.get(load_type_code)
-
+                    lesson_type = lesson_types_map.get(load_data["type_code"])
                     if not lesson_type:
-                        print(f"    ❌ ВНИМАНИЕ: Тип занятия '{load_type_code}' не найден. Пропускаем.")
+                        print(f"    ❌ Тип занятия '{load_data['type_code']}' не найден. Пропуск.")
                         continue
 
                     new_load = LessonTypeLoad(
                         group_subject_id=group_subject.id,
                         lesson_type_id=lesson_type.id,
-                        hours_per_week=load_hours
+                        hours_per_week=load_data["hours"]
                     )
                     db.session.add(new_load)
-                    print(f"    -> Добавлена нагрузка: {lesson_type.name} - {load_hours} ч/нед")
+                    print(f"    -> Для '{subject.name}' добавлена нагрузка: {lesson_type.name} - {load_data['hours']} ч/нед")
 
         try:
             db.session.commit()

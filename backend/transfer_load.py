@@ -9,7 +9,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
-from app._init_ import create_app, db # Импортируем напрямую из файла
+from backend.app import create_app, db # Импортируем напрямую из файла
 # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 from app.models import GroupSubject, LessonTypeLoad, LessonType
