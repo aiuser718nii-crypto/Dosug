@@ -6,7 +6,7 @@
 python migrations/add_subject_lesson_types.py
 """
 
-from app._init_ import create_app, db
+from app.__init__ import create_app, db
 from app.models import LessonType, LessonTypeEnum, Subject
 from datetime import datetime
 

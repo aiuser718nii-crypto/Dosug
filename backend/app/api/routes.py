@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, send_file
-from app._init_ import db
+from app.__init__ import db
 from app.models import Teacher, Room, Group, Subject, Schedule, Lesson, GroupSubject, LessonExtended
 from app.schedulers.genetic import GeneticScheduler
 from app.exporter import ExcelExporter
