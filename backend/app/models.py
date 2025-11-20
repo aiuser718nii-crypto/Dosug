@@ -320,6 +320,7 @@ class Room(db.Model):
     floor = db.Column(db.Integer)
     capacity = db.Column(db.Integer, nullable=False)
     room_type = db.Column(db.String(50))
+    is_special = db.Column(db.Boolean, default=False, nullable=False)
     is_active = db.Column(db.Boolean, default=True, index=True)
     notes = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -338,6 +339,7 @@ class Room(db.Model):
             'building': self.building,
             'capacity': self.capacity,
             'room_type': self.room_type,
+            'is_special': self.is_special,
             'is_active': self.is_active,
             'equipment': self.equipment_list
         }

@@ -15,7 +15,8 @@ def create_room():
     room = Room(
         name=data['name'],
         capacity=data['capacity'],
-        building=data.get('building')
+        building=data.get('building'),
+        is_special=data.get('is_special', False) 
     )
     db.session.add(room)
     db.session.commit()
@@ -30,7 +31,7 @@ def get_room(room_id):
 def update_room(room_id):
     room = Room.query.get_or_404(room_id)
     data = request.json
-    for field in ['name', 'capacity', 'building', 'floor', 'room_type', 'is_active', 'notes']:
+    for field in ['name', 'capacity', 'building', 'floor', 'room_type', 'is_special', 'is_active', 'notes']:
         if field in data:
             setattr(room, field, data[field])
     db.session.commit()

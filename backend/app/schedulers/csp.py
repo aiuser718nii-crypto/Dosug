@@ -10,9 +10,7 @@ from app.models import Semester, Week, LessonType, Group, Teacher, Room, Subject
 class TimeSlot:
     """Вспомогательный класс для CSP: Временной слот"""
     def __init__(self, week_id: int, day: int, time: int):
-        self.week_id = week_id
-        self.day = day
-        self.time = time
+        self.week_id, self.day, self.time = week_id, day, time
     
     def __hash__(self):
         return hash((self.week_id, self.day, self.time))
@@ -24,10 +22,7 @@ class TimeSlot:
 class LessonTask:
     """Вспомогательный класс для CSP: Задача на размещение одного занятия"""
     def __init__(self, group_id: int, subject_id: int, lesson_type_id: int, hours_per_week: int):
-        self.group_id = group_id
-        self.subject_id = subject_id
-        self.lesson_type_id = lesson_type_id
-        self.hours_per_week = hours_per_week
+        self.group_id, self.subject_id, self.lesson_type_id, self.hours_per_week = group_id, subject_id, lesson_type_id, hours_per_week
 
 class CSPScheduler(BaseScheduler):
     """
@@ -43,8 +38,6 @@ class CSPScheduler(BaseScheduler):
         
         self.iterations = 0
         self.solution = []
-        
-        # --- ИЗМЕНЕНИЕ 1: Добавляем отслеживание максимального прогресса ---
         self.max_progress_index = 0
         
         self.teacher_busy = defaultdict(set)
@@ -63,7 +56,8 @@ class CSPScheduler(BaseScheduler):
     def _load_data(self):
         """Загрузка данных из БД и подготовка кэшей"""
         self.semester = Semester.query.get(self.semester_id)
-        if not self.semester: raise ValueError("Семестр не найден")
+        if not self.semester:
+            raise ValueError("Семестр не найден")
             
         self.weeks = self.semester.weeks.order_by(Week.week_number).all()
         self.week_ids = [w.id for w in self.weeks]
@@ -100,7 +94,6 @@ class CSPScheduler(BaseScheduler):
             print(f"✅ CSP: Успех! За {duration:.2f}с")
             return {'lessons': result_lessons, 'fitness': 1.0, 'conflicts': [], 'time': duration, 'iterations': self.iterations}
         else:
-            # --- ИЗМЕНЕНИЕ 2: Используем max_progress_index для отчета ---
             max_progress = (self.max_progress_index / len(self.assignments_to_schedule)) if self.assignments_to_schedule else 0
             print(f"❌ CSP: Не удалось найти полное решение. Максимальный прогресс: {max_progress*100:.1f}%.")
             return {'lessons': [], 'fitness': max_progress, 'conflicts': [{'type': 'no_solution', 'message': 'Не удалось найти полное решение'}], 'time': duration, 'iterations': self.iterations}
@@ -116,7 +109,10 @@ class CSPScheduler(BaseScheduler):
                         task = LessonTask(group.id, gs.subject_id, load.lesson_type_id, load.hours_per_week)
                         task_groups[(group.id, gs.subject_id, load.lesson_type_id)].extend([task] * total_hours)
 
-        sorted_keys = sorted(task_groups.keys(), key=lambda k: (-task_groups[k][0].hours_per_week, len(self.subject_teachers.get(k[1], []))))
+        sorted_keys = sorted(
+            task_groups.keys(),
+            key=lambda k: (-task_groups[k][0].hours_per_week, len(self.subject_teachers.get(k[1], [])))
+        )
         final_tasks = []
         for key in sorted_keys:
             random.shuffle(task_groups[key])
@@ -129,23 +125,41 @@ class CSPScheduler(BaseScheduler):
         if not group_obj: return
 
         l_type = self.lesson_types.get(task.lesson_type_id)
-        req_special = l_type.requires_special_room if l_type else False
+        req_special_room = l_type.requires_special_room if l_type else False
+
+        available_rooms = [r for r in self.rooms.values() if r.capacity >= group_obj.student_count]
         
         suitable_rooms = []
-        if group_obj.default_room_id and not req_special:
-            def_room = self.rooms.get(group_obj.default_room_id)
-            if def_room and def_room.capacity >= group_obj.student_count: suitable_rooms = [def_room]
-        
-        if not suitable_rooms:
-            suitable_rooms = [r for r in self.rooms.values() if r.capacity >= group_obj.student_count]
+        if req_special_room:
+            suitable_rooms = [r for r in available_rooms if r.is_special]
+        else:
+            if group_obj.default_room_id:
+                default_room = self.rooms.get(group_obj.default_room_id)
+                if default_room and not default_room.is_special and default_room in available_rooms:
+                    suitable_rooms = [default_room]
             
-        if not suitable_teachers or not suitable_rooms: return
+            if not suitable_rooms:
+                suitable_rooms = [r for r in available_rooms if not r.is_special]
 
-        shuffled_weeks = list(self.week_ids)
-        random.shuffle(shuffled_weeks)
-        
+        if not suitable_teachers or not suitable_rooms:
+            subject_name = Subject.query.get(task.subject_id).name if task.subject_id else "???"
+            print("="*80)
+            print(f"❌ ТУПИК для задачи:")
+            print(f"  - Группа: {group_obj.name}")
+            print(f"  - Предмет: {subject_name}")
+            if not suitable_teachers:
+                print("  - ПРИЧИНА: Не найдено ни одного подходящего преподавателя для этого предмета.")
+            if not suitable_rooms:
+                room_req = "специальных аудиторий" if req_special_room else "обычных аудиторий"
+                print(f"  - ПРИЧИНА: Не найдено {room_req} вместимостью >= {group_obj.student_count} студентов.")
+            print("="*80)
+            return
+
+        shuffled_weeks = list(self.week_ids); random.shuffle(shuffled_weeks)
         for week_id in shuffled_weeks:
-            if self.task_weekly_count.get((task.group_id, task.subject_id, week_id), 0) >= task.hours_per_week: continue
+            weekly_key = (task.group_id, task.subject_id, task.lesson_type_id, week_id)
+            if self.task_weekly_count.get(weekly_key, 0) >= task.hours_per_week:
+                continue
             days = list(range(self.days_per_week)); random.shuffle(days)
             for day in days:
                 if self.group_daily_count.get((task.group_id, week_id, day), 0) >= self.max_lessons_per_day: continue
@@ -169,7 +183,7 @@ class CSPScheduler(BaseScheduler):
         self.solution.append({'task': task, 'slot': slot, 'teacher_id': t_id, 'room_id': r_id, 'prev_last_day': prev_day})
         self.group_busy[task.group_id].add(slot); self.teacher_busy[t_id].add(slot); self.room_busy[r_id].add(slot)
         self.group_daily_count[(task.group_id, slot.week_id, slot.day)] += 1
-        self.task_weekly_count[(task.group_id, task.subject_id, slot.week_id)] += 1
+        self.task_weekly_count[(task.group_id, task.subject_id, task.lesson_type_id, slot.week_id)] += 1
         day_idx = self.week_id_to_index.get(slot.week_id, 0) * self.days_per_week + slot.day
         self.group_subject_type_last_day_index[key] = day_idx
 
@@ -178,36 +192,25 @@ class CSPScheduler(BaseScheduler):
         task, slot, t_id, r_id = last['task'], last['slot'], last['teacher_id'], last['room_id']
         self.group_busy[task.group_id].remove(slot); self.teacher_busy[t_id].remove(slot); self.room_busy[r_id].remove(slot)
         self.group_daily_count[(task.group_id, slot.week_id, slot.day)] -= 1
-        self.task_weekly_count[(task.group_id, task.subject_id, slot.week_id)] -= 1
+        self.task_weekly_count[(task.group_id, task.subject_id, task.lesson_type_id, slot.week_id)] -= 1
         key = (task.group_id, task.subject_id, task.lesson_type_id)
         if last['prev_last_day'] is not None: self.group_subject_type_last_day_index[key] = last['prev_last_day']
         elif key in self.group_subject_type_last_day_index: del self.group_subject_type_last_day_index[key]
 
     def _backtrack(self, idx: int) -> bool:
         self.iterations += 1
-        self.max_progress_index = max(self.max_progress_index, idx) # --- ИЗМЕНЕНИЕ 3: Обновляем макс. прогресс ---
-        
+        self.max_progress_index = max(self.max_progress_index, idx)
         if self.iterations > self.max_iterations: return False
         if idx >= len(self.assignments_to_schedule): return True
-
         if self.iterations > 0 and self.iterations % 50000 == 0:
             progress = (self.max_progress_index / len(self.assignments_to_schedule)) * 100
             print(f"   ... итерация {self.iterations}, макс. прогресс {progress:.1f}%")
-            
         task = self.assignments_to_schedule[idx]
-        
         for slot, t_id, r_id in self._get_domain(task):
             self._assign(task, slot, t_id, r_id)
-            if self._backtrack(idx + 1):
-                return True
+            if self._backtrack(idx + 1): return True
             self._unassign()
-            
-        # --- ИЗМЕНЕНИЕ 4: Логирование при неудаче ---
-        if idx == self.max_progress_index: # Логируем только если это самая "дальняя" точка отказа
-            group = self.groups.get(task.group_id)
-            subject = Subject.query.get(task.subject_id)
-            l_type = self.lesson_types.get(task.lesson_type_id)
-            print(f"-> ❌ Не удалось найти место для задачи {idx+1}/{len(self.assignments_to_schedule)}: "
-                  f"Группа '{group.name}', Предмет '{subject.name}', Тип '{l_type.name}'")
-        
+        if idx == self.max_progress_index:
+            group = self.groups.get(task.group_id); subject = Subject.query.get(task.subject_id); l_type = self.lesson_types.get(task.lesson_type_id)
+            if group and subject and l_type: print(f"-> ❌ Не удалось найти место для задачи {idx+1}/{len(self.assignments_to_schedule)}: Группа '{group.name}', Предмет '{subject.name}', Тип '{l_type.name}'")
         return False

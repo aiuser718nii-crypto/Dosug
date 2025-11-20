@@ -16,12 +16,11 @@ export default function GenerateSemester() {
   const [progress, setProgress] = useState(null);
   const [error, setError] = useState(null);
 
-  // ИСПРАВЛЕНИЕ: убрали min_lessons_per_day
+  // Состояние формы без min_days_between_lessons
   const [formData, setFormData] = useState({
     name: '',
     max_iterations: 500000,
     max_lessons_per_day: 5,
-    min_days_between_lessons: 2, 
   });
   
   useEffect(() => {
@@ -66,18 +65,18 @@ export default function GenerateSemester() {
       alert('Введите название расписания');
       return;
     }
-    if (!window.confirm('Начать генерацию расписания с помощью CSP алгоритма? Это может занять некоторое время.')) {
+    if (!window.confirm('Начать генерацию расписания? Это может занять некоторое время.')) {
       return;
     }
     
     try {
       setGenerating(true);
       setError(null);
-      setProgress({ stage: 'generating', message: 'CSP алгоритм ищет идеальное решение...' });
+      setProgress({ stage: 'generating', message: 'CSP алгоритм ищет решение...' });
       
       const year = academicYears.find(y => y.id === selectedSemester.academic_year_id);
       
-      // ИСПРАВЛЕНИЕ: убрали min_lessons_per_day из отправляемых данных
+      // Отправляемые данные без min_days_between_lessons
       const data = {
         semester_id: selectedSemester.id,
         name: formData.name,
@@ -85,7 +84,6 @@ export default function GenerateSemester() {
         academic_year: year?.name || '2024/2025',
         max_iterations: formData.max_iterations,
         max_lessons_per_day: formData.max_lessons_per_day,
-        min_days_between_lessons: formData.min_days_between_lessons,
       };
       
       const result = await semesterScheduleService.generate(data);
@@ -141,7 +139,7 @@ export default function GenerateSemester() {
           🎯 Генерация семестрового расписания (CSP)
         </h1>
         <p className="text-gray-600 mt-1">
-          Использует алгоритм Constraint Satisfaction Problem для создания идеального расписания без конфликтов.
+          Использует алгоритм Constraint Satisfaction Problem для создания расписания без конфликтов.
         </p>
       </div>
 
@@ -193,7 +191,7 @@ export default function GenerateSemester() {
                   {year?.name || 'Учебный год не указан'}
                 </p>
                 <p className="text-sm text-gray-500 mt-1">
-                  📅 {semester.start_date} — {semester.end_date}
+                  📅 {new Date(semester.start_date).toLocaleDateString()} — {new Date(semester.end_date).toLocaleDateString()}
                 </p>
                 <div className="mt-3 pt-3 border-t border-gray-200">
                   <p className="text-sm font-semibold text-blue-600">
@@ -217,10 +215,11 @@ export default function GenerateSemester() {
       </div>
       
       {selectedSemester && (
+        <>
         <div className="bg-white rounded-lg shadow p-6 mb-6">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
             <span className="text-2xl">2️⃣</span>
-            <span>Настройки CSP алгоритма</span>
+            <span>Настройки генерации</span>
           </h2>
           
           <div className="space-y-6">
@@ -243,9 +242,7 @@ export default function GenerateSemester() {
                 <span>Основные ограничения</span>
               </h3>
               
-              {/* ИСПРАВЛЕНИЕ: Убрали поле min_lessons_per_day */}
-              <div className="grid md:grid-cols-2 gap-6">
-                <div>
+              <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Максимум пар в день
                   </label>
@@ -257,26 +254,9 @@ export default function GenerateSemester() {
                     min="1" max="7"
                   />
                   <p className="text-xs text-gray-600 mt-1">
-                    Жесткое ограничение на количество занятий в учебный день. Рекомендуется: 4-5.
+                    Жесткое ограничение на количество занятий в день. Рекомендуется: 4-5.
                   </p>
                 </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Перерыв между занятиями по 1 предмету (дней)
-                  </label>
-                  <input
-                    type="number"
-                    value={formData.min_days_between_lessons}
-                    onChange={(e) => setFormData({ ...formData, min_days_between_lessons: parseInt(e.target.value) || 1 })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    min="1" max="5"
-                  />
-                  <p className="text-xs text-gray-600 mt-1">
-                    Чтобы не было 2 лекций по матанализу подряд. 2 = 1 день перерыва. Рекомендуется: 2.
-                  </p>
-                </div>
-              </div>
             </div>
             
             <div>
@@ -309,9 +289,7 @@ export default function GenerateSemester() {
             </div>
           </div>
         </div>
-      )}
-      
-      {selectedSemester && (
+
         <div className="bg-white rounded-lg shadow p-6">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
             <span className="text-2xl">3️⃣</span>
@@ -324,10 +302,9 @@ export default function GenerateSemester() {
               <span>Перед запуском убедитесь:</span>
             </h3>
             <ul className="text-sm text-yellow-800 space-y-1 list-disc list-inside">
-              <li>У всех групп есть предметы с указанием часов в неделю.</li>
+              <li>У всех групп настроена учебная нагрузка (предметы и часы).</li>
               <li>У всех преподавателей привязаны предметы, которые они ведут.</li>
-              <li>В базе есть достаточное количество активных аудиторий.</li>
-              <li>Для выбранного семестра созданы недели.</li>
+              <li>В базе есть достаточное количество активных и подходящих аудиторий.</li>
             </ul>
           </div>
           
@@ -343,7 +320,7 @@ export default function GenerateSemester() {
             {generating ? (
               <span className="flex items-center justify-center gap-2">
                 <div className="spinner-small"></div>
-                Генерация идёт...
+                Генерация...
               </span>
             ) : (
               <span className="flex items-center justify-center gap-2">
@@ -352,13 +329,8 @@ export default function GenerateSemester() {
               </span>
             )}
           </button>
-          
-          {!generating && (
-            <p className="text-center text-sm text-gray-500 mt-3">
-              ⏱️ Обычное время генерации: от 3 до 20 секунд
-            </p>
-          )}
         </div>
+        </>
       )}
       
       {progress && (
@@ -409,7 +381,7 @@ export default function GenerateSemester() {
                     )}
                   </div>
                   <p className="text-sm text-gray-600 mt-4">
-                    Попробуйте увеличить "Максимум итераций" или ослабить ограничения (например, увеличить макс. пар в день).
+                    Попробуйте увеличить "Максимум итераций" или ослабить ограничения.
                   </p>
                   <button onClick={closeProgressModal} className="mt-6 w-full py-2 px-4 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700">
                     Понятно
