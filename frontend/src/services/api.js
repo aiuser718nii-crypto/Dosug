@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const API_URL = 'http://localhost:5000/api';
+// Используем относительный URL, чтобы работал прокси в Vite
+const API_URL = '/api';
 
 const api = axios.create({
   baseURL: API_URL,
@@ -60,26 +61,29 @@ export const scheduleService = {
   
   getById: (id) => api.get(`/schedules/${id}`).then(res => res.data),
   
+  // Этот метод теперь будет для старого алгоритма
   generate: (data) => api.post('/schedules/generate', data).then(res => res.data),
   
-  export: async (id) => {
-    const response = await api.get(`/schedules/${id}/export`, {
+  export: async (id, type) => {
+    const response = await api.get(`/schedules/${id}/export?type=${type}`, {
       responseType: 'blob'
     });
     
-    // Создание ссылки для скачивания
     const url = window.URL.createObjectURL(new Blob([response.data]));
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', `schedule_${id}.xlsx`);
+    link.setAttribute('download', `schedule_${id}_${type}.xlsx`);
     document.body.appendChild(link);
     link.click();
     link.remove();
     window.URL.revokeObjectURL(url);
   },
+
+  getConflicts: (id) => api.get(`/schedules/${id}/conflicts`).then(res => res.data),
+
+  activate: (id) => api.post(`/schedules/${id}/activate`).then(res => res.data),
   
   delete: (id) => api.delete(`/schedules/${id}`).then(res => res.data),
 };
 
-// Экспорт экземпляра axios для использования в других сервисах
 export default api;

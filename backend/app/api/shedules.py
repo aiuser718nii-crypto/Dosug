@@ -4,7 +4,7 @@ from app.models import Schedule, Lesson
 from app.models import Teacher
 from app.models import Room
 from app.models import Group
-from app._init_ import db
+from backend.app import db
 from app.schedulers.genetic import GeneticScheduler
 from app.exporter import ExcelExporter
 from app.services.shedule_services import ScheduleService

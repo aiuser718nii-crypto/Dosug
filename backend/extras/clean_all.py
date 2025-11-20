@@ -1,21 +1,52 @@
-# backend/clean_all.py
-from app._init_ import create_app, db
-from app.models import Schedule
-from app.models import LessonExtended
+"""
+Скрипт для ПОЛНОЙ ОЧИСТКИ данных, связанных с расписаниями, группами и нагрузкой.
+ИСПОЛЬЗОВАТЬ С ОСТОРОЖНОСТЬЮ!
+Запускать как модуль: python -m extras.clean_all
+"""
+from app import create_app, db
+from app.models import Schedule, Lesson, Group, GroupSubject, LessonTypeLoad
 
 app = create_app()
 
-with app.app_context():
-    print("\n🗑️ Очистка всех расписаний...\n")
-    
-    # Удаляем все занятия
-    deleted_lessons = LessonExtended.query.delete()
-    print(f"✅ Удалено занятий: {deleted_lessons}")
-    
-    # Удаляем все расписания
-    deleted_schedules = Schedule.query.delete()
-    print(f"✅ Удалено расписаний: {deleted_schedules}")
-    
-    db.session.commit()
-    
-    print("\n✅ База данных очищена!")
+def clean_all_schedule_data():
+    """Удаляет все данные о расписаниях, занятиях, группах и их нагрузке."""
+    with app.app_context():
+        print("\n" + "="*70)
+        print("🗑️  ОПАСНАЯ ОПЕРАЦИЯ: ПОЛНАЯ ОЧИСТКА ДАННЫХ")
+        print("="*70)
+        print("Будут удалены:")
+        print("  - Все Расписания (Schedule)")
+        print("  - Все Занятия (Lesson)")
+        print("  - Вся Учебная нагрузка (LessonTypeLoad)")
+        print("  - Все связи Группа-Предмет (GroupSubject)")
+        print("  - Все Группы (Group)")
+        
+        confirm = input("\n⚠️  Вы уверены, что хотите продолжить? Введите 'YES' для подтверждения: ")
+        if confirm != 'YES':
+            print("\n❌ Операция отменена пользователем.")
+            return
+
+        print("\nНачинаем очистку...\n")
+        try:
+            # Удаляем в правильном порядке, чтобы избежать ошибок внешних ключей
+            Lesson.query.delete()
+            print("  - Удалено занятий (Lesson)")
+            Schedule.query.delete()
+            print("  - Удалено расписаний (Schedule)")
+            LessonTypeLoad.query.delete()
+            print("  - Удалено записей о нагрузке (LessonTypeLoad)")
+            GroupSubject.query.delete()
+            print("  - Удалено связей групп с предметами (GroupSubject)")
+            Group.query.delete()
+            print("  - Удалено групп (Group)")
+            
+            db.session.commit()
+            print("\n" + "="*70)
+            print("✅ Все указанные данные успешно очищены!")
+            print("="*70)
+        except Exception as e:
+            db.session.rollback()
+            print(f"\n❌ Произошла ошибка во время очистки: {e}")
+
+if __name__ == '__main__':
+    clean_all_schedule_data()

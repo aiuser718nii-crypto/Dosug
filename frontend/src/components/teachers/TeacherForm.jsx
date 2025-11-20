@@ -13,7 +13,7 @@ export default function TeacherForm({ teacher, onSubmit, onCancel }) {
 
   useEffect(() => {
     loadSubjects();
-    
+
     if (teacher) {
       setFormData({
         name: teacher.name,
@@ -36,7 +36,7 @@ export default function TeacherForm({ teacher, onSubmit, onCancel }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
-    
+
     try {
       await onSubmit(formData);
     } finally {
@@ -58,7 +58,7 @@ export default function TeacherForm({ teacher, onSubmit, onCancel }) {
       <h3 className="text-lg font-bold mb-4">
         {teacher ? 'Редактировать преподавателя' : 'Новый преподаватель'}
       </h3>
-      
+
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="block text-sm font-medium mb-1">
@@ -92,9 +92,9 @@ export default function TeacherForm({ teacher, onSubmit, onCancel }) {
             min="1"
             max="40"
             value={formData.max_hours_per_week}
-            onChange={(e) => setFormData({ 
-              ...formData, 
-              max_hours_per_week: parseInt(e.target.value) 
+            onChange={(e) => setFormData({
+              ...formData,
+              max_hours_per_week: parseInt(e.target.value)
             })}
             className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
           />

@@ -1,11 +1,12 @@
 """
-Скрипт для добавления предметов в базу данных
+Скрипт для добавления/обновления предметов в базе данных из заданного списка.
+Запускать как модуль: python -m extras.subjects
 """
-
-from app._init_ import create_app, db
+from datetime import datetime
+from app import create_app, db
 from app.models import Subject
 
-# Список предметов
+# Словарь с предметами для импорта. Ключ - полное название, значение - короткий код.
 SUBJECTS = {
     "Воспитательная работа в воинской части (соединении)": "ВР",
     "Военные сообщения в операциях": "ВС",
@@ -97,11 +98,10 @@ SUBJECTS = {
     "Экономические, социальные и правовые проблемы общества и его Вооруженных Сил": "ЭСПП",
 }
 
+app = create_app()
 
 def add_subjects():
     """Добавление предметов в базу данных"""
-    app = create_app()
-    
     with app.app_context():
         print("\n" + "="*70)
         print("📚 ДОБАВЛЕНИЕ ПРЕДМЕТОВ В БАЗУ ДАННЫХ")
@@ -111,33 +111,35 @@ def add_subjects():
         skipped_count = 0
         updated_count = 0
         
+        existing_subjects = {s.code: s for s in Subject.query.all()}
+        
+        subjects_to_add = []
+        
         for name, code in SUBJECTS.items():
-            # Проверяем, существует ли уже предмет с таким кодом
-            existing = Subject.query.filter_by(code=code).first()
-            
-            if existing:
-                # Обновляем название если изменилось
+            if code in existing_subjects:
+                existing = existing_subjects[code]
                 if existing.name != name:
-                    print(f"🔄 Обновление: {code} - {name}")
+                    print(f"🔄 Обновление: {code} - '{name}'")
                     existing.name = name
                     existing.short_name = code
                     updated_count += 1
                 else:
-                    print(f"⏭️  Пропуск: {code} - уже существует")
                     skipped_count += 1
             else:
-                # Создаем новый предмет
                 subject = Subject(
                     name=name,
                     code=code,
                     short_name=code,
-                    is_active=True
+                    is_active=True,
+                    created_at=datetime.utcnow()
                 )
-                db.session.add(subject)
-                print(f"✅ Добавлен: {code} - {name}")
-                added_count += 1
+                subjects_to_add.append(subject)
+                print(f"✅ Подготовлен к добавлению: {code} - '{name}'")
         
-        # Сохраняем изменения
+        if subjects_to_add:
+            db.session.add_all(subjects_to_add)
+            added_count = len(subjects_to_add)
+
         try:
             db.session.commit()
             print("\n" + "="*70)
@@ -145,15 +147,12 @@ def add_subjects():
             print("="*70)
             print(f"📊 Статистика:")
             print(f"   • Добавлено новых: {added_count}")
-            print(f"   • Обновлено: {updated_count}")
-            print(f"   • Пропущено: {skipped_count}")
-            print(f"   • Всего предметов в базе: {Subject.query.count()}")
+            print(f"   • Обновлено существующих: {updated_count}")
+            print(f"   • Пропущено (без изменений): {skipped_count}")
             print("="*70 + "\n")
         except Exception as e:
             db.session.rollback()
-            print(f"\n❌ Ошибка при сохранении: {str(e)}")
-            raise
-
+            print(f"\n❌ Ошибка при сохранении в базу данных: {str(e)}")
 
 if __name__ == '__main__':
     add_subjects()
