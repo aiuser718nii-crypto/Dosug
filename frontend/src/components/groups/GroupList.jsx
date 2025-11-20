@@ -47,7 +47,14 @@ export default function GroupList({ groups, loading, onEdit, onDelete }) {
               <div className="flex justify-between">
                 <span className="text-gray-600">Часов в неделю:</span>
                 <span className="font-medium">
-                  {group.subjects.reduce((sum, s) => sum + s.hours_per_week, 0)}
+                  {/* Новый, правильный способ подсчета */}
+                  {group.subjects.reduce((totalSum, subject) => {
+                    // Для каждого предмета суммируем часы из его 'loads'
+                    const subjectHours = subject.loads.reduce((subjectSum, load) => {
+                      return subjectSum + (load.hours_per_week || 0);
+                    }, 0);
+                    return totalSum + subjectHours;
+                  }, 0)}
                 </span>
               </div>
             )}

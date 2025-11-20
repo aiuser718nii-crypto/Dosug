@@ -45,7 +45,8 @@ class Config:
 class DevelopmentConfig(Config):
     """Конфигурация для разработки"""
     DEBUG = True
-    SQLALCHEMY_DATABASE_URI = 'sqlite:///schedule_dev.db'
+    # Строка для подключения к PostgreSQL
+    SQLALCHEMY_DATABASE_URI = 'postgresql://postgres:postgres@localhost:5432/schedule_db'
 
 
 class ProductionConfig(Config):

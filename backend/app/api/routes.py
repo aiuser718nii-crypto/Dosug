@@ -6,25 +6,23 @@ from app.exporter import ExcelExporter
 import tempfile
 import os
 
+# Создаем главный Blueprint API
 api_bp = Blueprint('api', __name__)
 
-# ==================== TEACHERS ====================
-@api_bp.route('/teachers', methods=['GET'])
-def get_teachers():
-    teachers = Teacher.query.all()
-    return jsonify([t.to_dict() for t in teachers])
+# Регистрируем все дочерние Blueprint'ы
+# Обрати внимание: префикс URL будет суммироваться с префиксом api_bp (/api)
+# Так как в дочерних блюпринтах мы уже писали полные пути (например /teachers),
+# то здесь просто регистрируем их без дополнительного url_prefix, 
+# либо нужно убрать слеши в дочерних файлах.
+#
+# ВАРИАНТ: Оставить пути в дочерних файлах как есть, и здесь просто зарегистрировать их.
+# Но Flask требует уникальных имен для блюпринтов.
 
-@api_bp.route('/teachers', methods=['POST'])
-def create_teacher():
-    data = request.json
-    teacher = Teacher(
-        name=data['name'],
-        email=data.get('email'),
-        max_hours_per_week=data.get('max_hours_per_week', 20)
-    )
-    db.session.add(teacher)
-    db.session.commit()
-    return jsonify(teacher.to_dict()), 201
+def register_endpoints(app):
+    """Функция для регистрации блюпринтов в приложении (вызывается в create_app)"""
+    # Этот метод устарел, если мы используем вложенные блюпринты.
+    # Лучше просто зарегистрировать их в api_bp
+    pass
 
 # ==================== ROOMS ====================
 @api_bp.route('/rooms', methods=['GET'])
