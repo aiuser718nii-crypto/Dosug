@@ -519,7 +519,33 @@ class Schedule(db.Model):
     
     @hybrid_property
     def lessons_count(self) -> int:
-        return self.lessons.count()
+        """Количество занятий в расписании"""
+        from app.models import LessonExtended
+        return LessonExtended.query.filter_by(schedule_id=self.id).count()
+    
+    def to_dict(self, include_lessons: bool = False) -> Dict[str, Any]:
+        """Конвертация в словарь"""
+        result = {
+            'id': self.id,
+            'name': self.name,
+            'semester': self.semester,
+            'academic_year': self.academic_year,
+            'status': self.status,
+            'fitness_score': self.fitness_score,
+            'generation_method': self.generation_method,
+            'generation_time': self.generation_time,
+            'conflicts_count': self.conflicts_count,
+            'lessons_count': self.lessons_count,  # ДОБАВЬТЕ ЭТО
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'activated_at': self.activated_at.isoformat() if self.activated_at else None,
+            'created_by': self.created_by
+        }
+        
+        if include_lessons:
+            result['lessons'] = [l.to_dict() for l in self.lessons.all()]
+        
+        return result
     
     def activate(self):
         Schedule.query.filter(
